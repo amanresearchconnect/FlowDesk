@@ -58,7 +58,13 @@ class ApiClient {
     }
 
     if (!response.ok) {
-      throw new Error(payload.message || payload.error || `Request failed with status ${response.status}`);
+      let errorMessage = payload.message || payload.error?.message || (typeof payload.error === 'string' ? payload.error : undefined);
+      if (payload.error?.details && Array.isArray(payload.error.details)) {
+        errorMessage = payload.error.details
+          .map((d: any) => (d.field ? `${d.field}: ${d.issue}` : d.issue))
+          .join('. ');
+      }
+      throw new Error(errorMessage || `Request failed with status ${response.status}`);
     }
 
     return payload as ApiResponse<T>;
@@ -98,3 +104,4 @@ class ApiClient {
 }
 
 export const api = new ApiClient();
+

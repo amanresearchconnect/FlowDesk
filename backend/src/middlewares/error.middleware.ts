@@ -22,6 +22,7 @@ export function errorHandler(
     method: req.method,
     path: req.originalUrl,
     ip: req.ip,
+    details,
     stack: env.NODE_ENV === 'development' ? err.stack : undefined
   });
 
@@ -35,4 +36,3 @@ export function errorHandler(
     }
   });
 }
-

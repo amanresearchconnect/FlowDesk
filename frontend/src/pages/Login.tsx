@@ -120,15 +120,22 @@ export const Login: React.FC = () => {
               required
             />
 
-            <Input
-              label="Password"
-              id="password"
-              type="password"
-              placeholder="••••••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div>
+              <Input
+                label="Password"
+                id="password"
+                type="password"
+                placeholder="••••••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+              {isRegisterMode && (
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Min 10 characters with uppercase, number & symbol (e.g. <span className="font-mono text-slate-700">StrongPassword123!</span>)
+                </p>
+              )}
+            </div>
 
             {error && (
               <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium leading-relaxed">
@@ -188,3 +195,4 @@ export const Login: React.FC = () => {
     </div>
   );
 };
+

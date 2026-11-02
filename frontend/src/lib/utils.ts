@@ -21,3 +21,4 @@ export function formatDate(dateString?: string | Date): string {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
 }
+
