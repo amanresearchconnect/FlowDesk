@@ -242,6 +242,37 @@ Releases an agent-assigned conversation back to automated bot handling.
 
 ## External integrations endpoints
 
+### `GET /api/v1/integrations/google-sheets/status`
+Returns configuration and access status for Google Sheets API.
+- **Access**: Authenticated (`admin`)
+- **Response 200 OK**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "provider": "google_sheets",
+      "mockMode": false,
+      "sheetIdConfigured": true
+    }
+  }
+  ```
+
+### `POST /api/v1/integrations/google-sheets/test-connection`
+Queries the configured Google Spreadsheet to verify sheet readability and row count.
+- **Access**: Authenticated (`admin`)
+- **Response 200 OK**:
+  ```json
+  {
+    "success": true,
+    "data": {
+      "connected": true,
+      "spreadsheetTitle": "Recruitment_Responses_2026",
+      "worksheetName": "Sheet1",
+      "totalRowsDetected": 850
+    }
+  }
+  ```
+
 ### `GET /api/v1/integrations/microsoft-graph/status`
 Returns configuration and token validity for Microsoft Graph API.
 - **Access**: Authenticated (`admin`)

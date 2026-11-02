@@ -19,7 +19,7 @@ gantt
     Phase 5 Team Inbox & Socket.IO          :p5, after p4, 4d
     section AI & Integrations
     Phase 6 AI Agent Engine & Tools         :p6, after p5, 4d
-    Phase 7 Microsoft Graph & Excel Sync    :p7, after p6, 3d
+    Phase 7 Data Verification & Google Sheets :p7, after p6, 3d
     section Frontend & Verification
     Phase 8 React 19 Frontend SPA           :p8, after p7, 7d
     Phase 9 End-to-End Testing & Hardening  :p9, after p8, 4d
@@ -91,14 +91,16 @@ gantt
 - Implement confidence threshold evaluation and automatic human handoff logic.
 - **Verification criteria**: Send candidate queries to AI engine; verify that domain questions receive answers from knowledge base fixtures and unresolvable queries trigger handoff.
 
-### Phase 7: External integrations (Microsoft Graph and Excel Online)
+### Phase 7: External integrations & verification (Google Sheets, Microsoft Graph, and Database)
 **Estimated effort**: 3 working days
-- Implement Microsoft Graph API client using client credentials flow.
+- Implement provider-agnostic `IVerificationProvider` supporting Google Sheets, Microsoft Graph Excel, and internal database sources.
+- Build Google Sheets reader client querying rows by candidate phone number and survey code.
+- Build Microsoft Graph API client using client credentials flow.
 - Build Excel Online worksheet reader querying used ranges by phone number and survey code.
 - Implement local mock fixture mode for testing without active Azure credentials.
 - Implement `verify_data` workflow step handler integrating the Graph API reader.
 - Add Redis caching layer (60s TTL) to prevent API throttling during lookups.
-- **Verification criteria**: Workflow successfully pauses, queries sample Excel sheet for matching phone and survey ID, and branches accordingly.
+- **Verification criteria**: Workflow successfully pauses, queries sample Google Sheets / Excel fixture for matching phone and survey ID, and branches accordingly.
 
 ### Phase 8: React 19 frontend SPA
 **Estimated effort**: 7 working days

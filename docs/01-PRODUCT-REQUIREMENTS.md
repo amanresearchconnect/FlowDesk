@@ -37,7 +37,7 @@ sequenceDiagram
     actor Candidate as Candidate
     participant System as FlowDesk Platform
     participant AI as AI Agent Engine
-    participant Excel as Excel Online (MS Graph)
+    participant Sheet as Verification Source (Google Sheets / Excel)
 
     Employee->>System: Upload candidate spreadsheet (100-500 rows)
     System->>System: Validate records, normalize phone (E.164), deduplicate
@@ -60,7 +60,7 @@ sequenceDiagram
             end
         end
         Candidate-->>System: Submit Survey ID & phone number
-        System->>Excel: Query external worksheet via Graph API
+        System->>Sheet: Query external worksheet (Google Sheets / Excel)
         alt Completed record matches
             System->>Candidate: Send verification confirmation
             System->>System: Mark candidate status as "Survey Completed"
@@ -111,7 +111,7 @@ sequenceDiagram
   - `wait_for_reply`: Pauses execution until an incoming message arrives or a timeout expires.
   - `condition`: Evaluates contact attributes or reply content using pattern matching and boolean operators.
   - `delay`: Delays subsequent execution by a specified duration.
-  - `verify_data`: Triggers an external lookup adapter (for example: Microsoft Graph Excel lookup).
+  - `verify_data`: Triggers an external lookup adapter (Google Sheets via Google Drive API, Microsoft Graph Excel Online, or internal database).
   - `update_record`: Updates contact fields, tags, or campaign enrollment status.
   - `ai_conversation`: Engages the AI conversational agent for Q&A while maintaining the active state.
   - `human_handoff`: Escalate the thread to human operators and pause automated progress.
@@ -133,8 +133,10 @@ sequenceDiagram
 - Support keyword and semantic vector search for context retrieval.
 - Provide administrative endpoints to create, edit, activate, or archive entries.
 
-### 9. External integrations
+### 9. External integrations & spreadsheet verification
+- Google Sheets API integration to inspect survey response sheets hosted on Google Drive.
 - Microsoft Graph API integration to inspect Excel Online workbooks in OneDrive or SharePoint.
+- Internal database verification lookup for directly connected submission tables or collections.
 - Query specified worksheet ranges to locate candidate survey records by phone number or Survey ID.
 - Provide a local mock integration mode using test fixtures for development and automated testing.
 

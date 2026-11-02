@@ -114,10 +114,10 @@ stateDiagram-v2
 
 ### 6. `verify_data`
 - Calls an external integration adapter synchronously or with short retry logic.
-- Config schema for Excel Online / Microsoft Graph:
+- Config schema for Google Sheets, Excel Online, or Database:
   ```json
   {
-    "integrationType": "microsoft_graph_excel",
+    "integrationType": "google_sheets", // 'google_sheets' | 'microsoft_graph_excel' | 'internal_db'
     "action": "lookup_row",
     "query": {
       "phone": "{{contact.phone}}",
@@ -229,7 +229,7 @@ This guarantees that network re-transmissions or duplicate webhook deliveries ne
 
 ## Error handling and failure recovery
 
-1. **Transient external failures**: Calls to WhatsApp API or Microsoft Graph use an exponential backoff policy:
+1. **Transient external failures**: Calls to WhatsApp API, Google Sheets API, or Microsoft Graph use an exponential backoff policy:
    - Initial delay: 2,000 ms.
    - Multiplier: 2.
    - Max attempts: 3.

@@ -38,7 +38,7 @@ graph TD
     subgraph External ["External Services"]
         MockWA["Mock WhatsApp Service"]
         MetaWA["Meta WhatsApp Cloud API"]
-        GraphAPI["Microsoft Graph (Excel Online)"]
+        VerifySources["Verification Sources (Google Sheets / MS Graph / DB)"]
         LLMProvider["LLM API (Gemini / OpenAI / Mock)"]
     end
 
@@ -50,7 +50,7 @@ graph TD
     QueueWorkers --> WFEngine & AIEngine & ExtSync
     WFEngine --> MongoDB & RedisDB
     MsgMod --> MockWA & MetaWA
-    ExtSync --> GraphAPI
+    ExtSync --> VerifySources
     AIEngine --> LLMProvider
     ConvMod --> SocketServer
     SocketServer -->|Real-time Updates| SPA
@@ -69,7 +69,7 @@ graph TD
 | `workflow` | DAG definition, step execution, condition evaluation, state transitions | Campaigns, Webhook Gateway, Worker | Contacts, Messaging, AI, Integrations, MongoDB, Redis |
 | `ai-agent` | Prompt construction, intent detection, knowledge retrieval, tool execution | Workflow, Worker | Knowledge Base, Integrations, LLM Providers |
 | `knowledge-base` | FAQ storage, policy articles, retrieval indexing | AI Agent, API Gateway | MongoDB |
-| `integrations` | Microsoft Graph API client, Excel Online reader, local mock fixture loader | Workflow, AI Agent | Microsoft Graph API, MongoDB |
+| `integrations` | Google Sheets client, Microsoft Graph client, DB verification, local mock loader | Workflow, AI Agent | Google Sheets API, MS Graph, MongoDB |
 | `analytics` | Metrics aggregation, funnel statistics, export generation | API Gateway | MongoDB |
 | `audit` | Administrative event logging, payload diffing | All Modules | MongoDB |
 
@@ -88,7 +88,7 @@ graph TD
 - Consumes from 4 primary queues:
   - `message-dispatch`: Controls outbound message pacing (e.g. 20 messages/second) to satisfy WhatsApp rate limits.
   - `workflow-execution`: Advances execution steps for contacts, evaluates conditions, and runs actions.
-  - `integration-sync`: Executes external network requests against Microsoft Graph API.
+  - `integration-sync`: Executes external verification requests against Google Sheets, Microsoft Graph, or internal database.
   - `ai-tasks`: Handles LLM generation calls asynchronously without tying up API HTTP threads.
 
 ## Real-time communication layer

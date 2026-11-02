@@ -4,7 +4,7 @@
 
 FlowDesk enforces a pyramid testing strategy. Business-critical logic - phone normalization, workflow state transitions, webhook signature validation, and AI tool guardrails - must be thoroughly tested with automated test suites before deployment.
 
-Because external APIs (Meta WhatsApp Cloud API, Microsoft Graph, LLM APIs) carry rate limits and external dependencies, the platform relies on in-process mock providers during testing.
+Because external APIs (Meta WhatsApp Cloud API, Google Sheets API, Microsoft Graph, LLM APIs) carry rate limits and external dependencies, the platform relies on in-process mock providers during testing.
 
 ```mermaid
 graph TD
@@ -80,7 +80,7 @@ sequenceDiagram
 Test fixtures reside in `tests/fixtures/`:
 - `sample-candidates.csv`: 20 rows of candidate data with mixed formatting and intentional duplicate rows.
 - `sample-candidates.xlsx`: Excel workbook formatted with multi-column headers.
-- `mock-survey-sheet.json`: Mock response data mirroring Microsoft Graph Excel worksheet range queries.
+- `mock-survey-sheet.json`: Mock response data mirroring Google Sheets and Microsoft Graph worksheet range queries.
 - `meta-webhook-payloads.json`: Captured raw payloads from Meta WhatsApp Cloud API (text messages, delivery receipts, read receipts).
 
 ## CI quality gates
