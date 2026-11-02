@@ -44,3 +44,4 @@ export async function disconnectDatabase(): Promise<void> {
     logger.info('MongoDB connection closed');
   }
 }
+

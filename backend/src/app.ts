@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { env } from './config/env.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { contactsRouter } from './modules/contacts/contacts.routes.js';
+import { contactListsRouter } from './modules/contacts/contact-lists.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { NotFoundError } from './utils/errors.js';
 import { requireAuth } from './middlewares/auth.middleware.js';
@@ -37,6 +39,8 @@ export function createApp(): Express {
   // Base API router
   const apiRouter = express.Router();
   apiRouter.use('/auth', authRouter);
+  apiRouter.use('/contacts', contactsRouter);
+  apiRouter.use('/contact-lists', contactListsRouter);
 
   // RBAC test endpoint for verification
   apiRouter.get(
@@ -75,3 +79,4 @@ export function createApp(): Express {
 
   return app;
 }
+

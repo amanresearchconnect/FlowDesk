@@ -39,3 +39,4 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
     throw new UnauthorizedError('Invalid or expired authentication token');
   }
 }
+
