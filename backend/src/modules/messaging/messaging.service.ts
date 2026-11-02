@@ -4,6 +4,7 @@ import { Contact } from '../../models/contact.model.js';
 import { Campaign } from '../../models/campaign.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { WorkflowEngine } from '../workflows/workflow.engine.js';
+import { AIAgentService } from '../ai-agent/ai-agent.service.js';
 import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { mockWhatsAppProvider } from '../../providers/messaging/mock-whatsapp.provider.js';
 import { normalizePhoneNumber } from '../../utils/phone.js';
@@ -164,7 +165,26 @@ export class MessagingService {
     }
 
     // Trigger workflow engine if contact is waiting for reply
-    await WorkflowEngine.handleContactReply(contact._id, text.trim());
+    const workflowResult = await WorkflowEngine.handleContactReply(contact._id, text.trim());
+
+    // If workflow did not consume this message and conversation is bot-managed, pass to AI Agent
+    if (!workflowResult.handled) {
+      const freshConv = await Conversation.findById(conversation._id);
+      if (freshConv && freshConv.status === 'bot') {
+        try {
+          await AIAgentService.handleCandidateMessage({
+            conversationId: freshConv._id,
+            contactId: contact._id,
+            text: text.trim()
+          });
+        } catch (aiErr: any) {
+          logger.error('Error during AI Agent message handling', {
+            conversationId: freshConv._id.toString(),
+            error: aiErr.message
+          });
+        }
+      }
+    }
 
     logger.info('Inbound WhatsApp message processed', {
       phone,

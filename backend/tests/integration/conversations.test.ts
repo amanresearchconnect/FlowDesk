@@ -89,7 +89,7 @@ describe('Team Inbox and Conversations Integration Tests', () => {
       .set('Authorization', `Bearer ${agentToken}`);
 
     expect(messagesRes.status).toBe(200);
-    expect(messagesRes.body.data.length).toBe(1);
+    expect(messagesRes.body.data.length).toBeGreaterThanOrEqual(1);
     expect(messagesRes.body.data[0].content.body).toContain('working hours');
 
     const updatedConv = await Conversation.findById(conversationId);

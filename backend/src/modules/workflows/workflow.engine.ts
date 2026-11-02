@@ -8,6 +8,7 @@ import { Contact } from '../../models/contact.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
+import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { interpolateTemplate } from '../../utils/template.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -199,6 +200,43 @@ export class WorkflowEngine {
         if (node.nextStepId) {
           await this.advanceToStep(execution, node.nextStepId);
         }
+        break;
+      }
+
+      case 'human_handoff': {
+        const conversation = await Conversation.findOne({ contactId: execution.contactId });
+        if (conversation) {
+          conversation.status = 'human_needed';
+          await conversation.save();
+
+          emitToConversation(conversation._id.toString(), 'conversation:escalated', {
+            conversationId: conversation._id.toString(),
+            reason: node.config?.reason || 'Workflow directed human handoff'
+          });
+          emitToTeam('conversation:escalated', {
+            conversationId: conversation._id.toString(),
+            conversation: conversation.toSafeObject(),
+            reason: node.config?.reason || 'Workflow directed human handoff'
+          });
+        }
+        this.logStep(execution, node, 'completed', { escalated: true });
+        if (node.nextStepId) {
+          await this.advanceToStep(execution, node.nextStepId);
+        }
+        break;
+      }
+
+      case 'ai_conversation': {
+        if (node.config?.prompt) {
+          const contact = await Contact.findById(execution.contactId);
+          if (contact) {
+            const provider = getMessagingProvider();
+            await provider.sendMessage(contact.phone, { text: node.config.prompt });
+          }
+        }
+        execution.status = 'waiting_for_reply';
+        this.logStep(execution, node, 'completed', { waitingForAIInteraction: true });
+        await execution.save();
         break;
       }
 
