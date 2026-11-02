@@ -13,3 +13,4 @@ router.post('/:id/release-to-bot', requireAuth, ConversationsController.releaseT
 router.post('/:id/close', requireAuth, ConversationsController.close);
 
 export const conversationsRouter = router;
+

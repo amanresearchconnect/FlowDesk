@@ -89,3 +89,4 @@ conversationSchema.methods.toSafeObject = function (): IConversation & { id: str
 };
 
 export const Conversation = mongoose.model<IConversationDocument>('Conversation', conversationSchema);
+
