@@ -1,8 +1,8 @@
 import http from 'node:http';
-import { Server as SocketIOServer } from 'socket.io';
 import { createApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { disconnectRedis } from './config/redis.js';
+import { initSocketServer } from './socket/socket.server.js';
 import { env } from './config/env.js';
 import { logger } from './utils/logger.js';
 
@@ -15,20 +15,7 @@ async function bootstrap() {
     const server = http.createServer(app);
 
     // Initialize Socket.IO
-    const io = new SocketIOServer(server, {
-      cors: {
-        origin: env.CLIENT_URL,
-        credentials: true
-      }
-    });
-
-    io.on('connection', (socket) => {
-      logger.info('WebSocket client connected', { socketId: socket.id });
-
-      socket.on('disconnect', () => {
-        logger.info('WebSocket client disconnected', { socketId: socket.id });
-      });
-    });
+    initSocketServer(server);
 
     server.listen(env.PORT, () => {
       logger.info(`FlowDesk API server listening on port ${env.PORT}`, {

@@ -2,7 +2,9 @@ import { Types } from 'mongoose';
 import { Message, IMessageDocument } from '../../models/message.model.js';
 import { Contact } from '../../models/contact.model.js';
 import { Campaign } from '../../models/campaign.model.js';
+import { Conversation } from '../../models/conversation.model.js';
 import { WorkflowEngine } from '../workflows/workflow.engine.js';
+import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { mockWhatsAppProvider } from '../../providers/messaging/mock-whatsapp.provider.js';
 import { normalizePhoneNumber } from '../../utils/phone.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
@@ -59,6 +61,15 @@ export class MessagingService {
       await Campaign.updateOne({ _id: message.campaignId }, { $inc: incField });
     }
 
+    // Broadcast status update via Socket.IO
+    if (message.conversationId) {
+      emitToConversation(message.conversationId.toString(), 'message:status_updated', {
+        messageId: message._id.toString(),
+        providerMessageId,
+        status
+      });
+    }
+
     return message;
   }
 
@@ -103,8 +114,29 @@ export class MessagingService {
 
     const campaignId = lastOutbound?.campaignId;
 
+    // Find or create Conversation thread for contact
+    let conversation = await Conversation.findOne({ contactId: contact._id });
+    if (!conversation) {
+      conversation = await Conversation.create({
+        contactId: contact._id,
+        channel: 'whatsapp',
+        status: 'bot',
+        activeCampaignId: campaignId || null,
+        lastMessageAt: new Date(),
+        lastMessagePreview: text.trim().substring(0, 100),
+        unreadCount: 1
+      });
+    } else {
+      conversation.lastMessageAt = new Date();
+      conversation.lastMessagePreview = text.trim().substring(0, 100);
+      conversation.unreadCount = (conversation.unreadCount || 0) + 1;
+      if (campaignId) conversation.activeCampaignId = campaignId;
+      await conversation.save();
+    }
+
     // Create inbound message
     const message = await Message.create({
+      conversationId: conversation._id,
       contactId: contact._id,
       campaignId: campaignId || null,
       direction: 'inbound',
@@ -114,6 +146,16 @@ export class MessagingService {
       content: { body: text.trim() },
       status: 'delivered',
       deliveredAt: new Date()
+    });
+
+    const safeMessage = message.toSafeObject();
+
+    // Broadcast live event via Socket.IO
+    emitToConversation(conversation._id.toString(), 'message:received', safeMessage);
+    emitToTeam('message:received', {
+      conversationId: conversation._id.toString(),
+      message: safeMessage,
+      contact: contact.toSafeObject()
     });
 
     // If linked to a campaign, increment the 'replied' stat

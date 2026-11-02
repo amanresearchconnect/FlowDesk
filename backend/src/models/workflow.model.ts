@@ -132,3 +132,4 @@ workflowSchema.methods.toSafeObject = function (): IWorkflow & { id: string } {
 };
 
 export const Workflow = mongoose.model<IWorkflowDocument>('Workflow', workflowSchema);
+

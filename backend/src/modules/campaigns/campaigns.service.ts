@@ -2,6 +2,7 @@ import mongoose, { Types } from 'mongoose';
 import { Campaign, ICampaignDocument, ICampaignStats } from '../../models/campaign.model.js';
 import { ContactList } from '../../models/contact-list.model.js';
 import { Contact } from '../../models/contact.model.js';
+import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
 import { interpolateTemplate } from '../../utils/template.js';
@@ -99,7 +100,26 @@ export class CampaignsService {
           text: personalizedBody
         });
 
+        let conversation = await Conversation.findOne({ contactId: contact._id });
+        if (!conversation) {
+          conversation = await Conversation.create({
+            contactId: contact._id,
+            channel: 'whatsapp',
+            status: 'bot',
+            activeCampaignId: campaign._id,
+            lastMessageAt: new Date(),
+            lastMessagePreview: personalizedBody.substring(0, 100),
+            unreadCount: 0
+          });
+        } else {
+          conversation.lastMessageAt = new Date();
+          conversation.lastMessagePreview = personalizedBody.substring(0, 100);
+          conversation.activeCampaignId = campaign._id;
+          await conversation.save();
+        }
+
         await Message.create({
+          conversationId: conversation._id,
           contactId: contact._id,
           campaignId: campaign._id,
           direction: 'outbound',

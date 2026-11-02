@@ -27,3 +27,4 @@ router.get('/:id', requireAuth, WorkflowsController.getWorkflow);
 router.get('/', requireAuth, WorkflowsController.listWorkflows);
 
 export const workflowsRouter = router;
+

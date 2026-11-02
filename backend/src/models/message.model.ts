@@ -6,6 +6,7 @@ export type MessageStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
 export type MessageType = 'text' | 'template' | 'interactive';
 
 export interface IMessage {
+  conversationId?: Types.ObjectId;
   contactId: Types.ObjectId;
   campaignId?: Types.ObjectId;
   workflowExecutionId?: Types.ObjectId;
@@ -36,6 +37,11 @@ export interface IMessageDocument extends IMessage, Document {
 
 const messageSchema = new Schema<IMessageDocument>(
   {
+    conversationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Conversation',
+      default: null
+    },
     contactId: {
       type: Schema.Types.ObjectId,
       ref: 'Contact',
@@ -113,6 +119,7 @@ const messageSchema = new Schema<IMessageDocument>(
   }
 );
 
+messageSchema.index({ conversationId: 1, createdAt: 1 });
 messageSchema.index({ contactId: 1, createdAt: -1 });
 messageSchema.index({ campaignId: 1, status: 1 });
 messageSchema.index({ status: 1, createdAt: 1 });

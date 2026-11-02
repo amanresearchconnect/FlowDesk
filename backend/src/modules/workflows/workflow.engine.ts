@@ -5,6 +5,7 @@ import {
   IWorkflowExecutionDocument
 } from '../../models/workflow-execution.model.js';
 import { Contact } from '../../models/contact.model.js';
+import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
 import { interpolateTemplate } from '../../utils/template.js';
@@ -106,7 +107,26 @@ export class WorkflowEngine {
         const provider = getMessagingProvider();
         const sendResult = await provider.sendMessage(contact.phone, { text: messageBody });
 
+        let conversation = await Conversation.findOne({ contactId: contact._id });
+        if (!conversation) {
+          conversation = await Conversation.create({
+            contactId: contact._id,
+            channel: 'whatsapp',
+            status: 'bot',
+            activeCampaignId: execution.campaignId || null,
+            lastMessageAt: new Date(),
+            lastMessagePreview: messageBody.substring(0, 100),
+            unreadCount: 0
+          });
+        } else {
+          conversation.lastMessageAt = new Date();
+          conversation.lastMessagePreview = messageBody.substring(0, 100);
+          if (execution.campaignId) conversation.activeCampaignId = execution.campaignId;
+          await conversation.save();
+        }
+
         await Message.create({
+          conversationId: conversation._id,
           contactId: contact._id,
           campaignId: execution.campaignId,
           workflowExecutionId: execution._id,
@@ -315,3 +335,4 @@ export class WorkflowEngine {
     });
   }
 }
+
