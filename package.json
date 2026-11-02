@@ -8,6 +8,8 @@
     "frontend"
   ],
   "scripts": {
+    "dev": "concurrently -n \"API,CLIENT\" -c \"blue.bold,green.bold\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:all": "concurrently -n \"API,WORKER,CLIENT\" -c \"blue.bold,magenta.bold,green.bold\" \"npm run dev:backend\" \"npm run dev:worker\" \"npm run dev:frontend\"",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "seed": "npm --workspace=backend run seed",
@@ -26,5 +28,8 @@
     "workflow"
   ],
   "author": "",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
 }
