@@ -8,14 +8,17 @@
     "frontend"
   ],
   "scripts": {
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "seed": "npm --workspace=backend run seed",
     "dev:backend": "npm --workspace=backend run dev",
     "dev:worker": "npm --workspace=backend run dev:worker",
+    "dev:frontend": "npm --workspace=frontend run dev",
     "test:backend": "npm --workspace=backend run test",
     "test:coverage": "npm --workspace=backend run test:coverage",
     "build:backend": "npm --workspace=backend run build",
-    "dev:frontend": "npm --workspace=frontend run dev",
     "build:frontend": "npm --workspace=frontend run build"
-  },                       
+  },
   "keywords": [
     "whatsapp",
     "automation",
@@ -25,4 +28,3 @@
   "author": "",
   "license": "UNLICENSED"
 }
-
