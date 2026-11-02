@@ -122,3 +122,4 @@ messageSchema.methods.toSafeObject = function (): IMessage & { id: string } {
 };
 
 export const Message = mongoose.model<IMessageDocument>('Message', messageSchema);
+

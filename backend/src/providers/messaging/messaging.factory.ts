@@ -10,3 +10,4 @@ export function getMessagingProvider(): IMessagingProvider {
   // MetaWhatsAppProvider will be loaded when MESSAGING_PROVIDER=meta
   return mockWhatsAppProvider;
 }
+

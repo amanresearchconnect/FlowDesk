@@ -107,3 +107,4 @@ campaignSchema.methods.toSafeObject = function (): ICampaign & { id: string } {
 };
 
 export const Campaign = mongoose.model<ICampaignDocument>('Campaign', campaignSchema);
+

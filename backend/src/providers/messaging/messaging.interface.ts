@@ -28,3 +28,4 @@ export interface IMessagingProvider {
   verifyWebhookSignature(headers: Record<string, string>, rawPayload: Buffer | string): boolean;
   parseWebhookPayload(payload: any): IParsedWebhookEvent[];
 }
+

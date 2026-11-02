@@ -14,3 +14,4 @@ export const listCampaignsQuerySchema = z.object({
 });
 
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
+

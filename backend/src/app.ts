@@ -7,6 +7,7 @@ import { authRouter } from './modules/auth/auth.routes.js';
 import { contactsRouter } from './modules/contacts/contacts.routes.js';
 import { contactListsRouter } from './modules/contacts/contact-lists.routes.js';
 import { campaignsRouter } from './modules/campaigns/campaigns.routes.js';
+import { workflowsRouter } from './modules/workflows/workflows.routes.js';
 import { mockWhatsAppRouter } from './modules/mock/mock.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { NotFoundError } from './utils/errors.js';
@@ -44,6 +45,7 @@ export function createApp(): Express {
   apiRouter.use('/contacts', contactsRouter);
   apiRouter.use('/contact-lists', contactListsRouter);
   apiRouter.use('/campaigns', campaignsRouter);
+  apiRouter.use('/workflows', workflowsRouter);
   apiRouter.use('/mock/whatsapp', mockWhatsAppRouter);
 
   // RBAC test endpoint for verification

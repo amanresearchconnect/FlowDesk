@@ -139,3 +139,4 @@ export class MockWhatsAppProvider implements IMessagingProvider {
 
 // Export singleton instance for mock operations
 export const mockWhatsAppProvider = new MockWhatsAppProvider();
+

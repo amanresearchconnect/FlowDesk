@@ -8,3 +8,4 @@ router.post('/status', MockWhatsAppController.simulateStatus);
 router.get('/outbound', MockWhatsAppController.getOutboundMessages);
 
 export const mockWhatsAppRouter = router;
+

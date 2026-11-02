@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { Message, IMessageDocument } from '../../models/message.model.js';
 import { Contact } from '../../models/contact.model.js';
 import { Campaign } from '../../models/campaign.model.js';
+import { WorkflowEngine } from '../workflows/workflow.engine.js';
 import { mockWhatsAppProvider } from '../../providers/messaging/mock-whatsapp.provider.js';
 import { normalizePhoneNumber } from '../../utils/phone.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
@@ -120,6 +121,9 @@ export class MessagingService {
       await Campaign.updateOne({ _id: campaignId }, { $inc: { 'stats.replied': 1 } });
     }
 
+    // Trigger workflow engine if contact is waiting for reply
+    await WorkflowEngine.handleContactReply(contact._id, text.trim());
+
     logger.info('Inbound WhatsApp message processed', {
       phone,
       text: text.trim(),
@@ -136,3 +140,4 @@ export class MessagingService {
 
 // Auto-initialize provider listeners
 MessagingService.initialize();
+
