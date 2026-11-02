@@ -1,0 +1,24 @@
+{
+  "name": "flowdesk-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FlowDesk: Internal WhatsApp Automation Platform",
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "dev:backend": "npm --workspace=backend run dev",
+    "dev:worker": "npm --workspace=backend run dev:worker",
+    "test:backend": "npm --workspace=backend run test",
+    "test:coverage": "npm --workspace=backend run test:coverage",
+    "build:backend": "npm --workspace=backend run build"
+  },
+  "keywords": [
+    "whatsapp",
+    "automation",
+    "recruitment",
+    "workflow"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}
