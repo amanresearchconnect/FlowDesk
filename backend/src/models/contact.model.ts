@@ -101,3 +101,4 @@ contactSchema.methods.toSafeObject = function (): IContact & { id: string } {
 };
 
 export const Contact = mongoose.model<IContactDocument>('Contact', contactSchema);
+

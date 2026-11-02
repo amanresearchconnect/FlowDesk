@@ -87,3 +87,4 @@ contactListSchema.methods.toSafeObject = function (): IContactList & { id: strin
 };
 
 export const ContactList = mongoose.model<IContactListDocument>('ContactList', contactListSchema);
+

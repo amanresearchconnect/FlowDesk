@@ -7,3 +7,4 @@ const router = Router();
 router.get('/', requireAuth, ContactsController.listContactLists);
 
 export const contactListsRouter = router;
+

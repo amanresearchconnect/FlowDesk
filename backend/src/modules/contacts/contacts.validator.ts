@@ -32,3 +32,4 @@ export const listContactListsQuerySchema = z.object({
 
 export type ImportContactsInput = z.infer<typeof importContactsSchema>;
 export type ListContactsQuery = z.infer<typeof listContactsQuerySchema>;
+

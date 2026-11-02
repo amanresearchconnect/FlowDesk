@@ -40,3 +40,4 @@ describe('Phone Number Normalization Unit Tests', () => {
     expect(resultEmpty.isValid).toBe(false);
   });
 });
+
