@@ -45,6 +45,17 @@ const envSchema = z.object({
   MS_GRAPH_WORKBOOK_ITEM_ID: z.string().optional().default(''),
   MS_GRAPH_WORKSHEET_NAME: z.string().default('Responses'),
 
+  // External Verification & Integrations
+  VERIFICATION_PROVIDER: z.enum(['mock', 'google_sheets', 'microsoft_graph', 'internal_db']).default('mock'),
+  VERIFICATION_MOCK_MODE: z.coerce.boolean().default(true),
+
+  // Google Sheets
+  GOOGLE_SHEETS_SPREADSHEET_ID: z.string().optional().default(''),
+  GOOGLE_SHEETS_SHEET_NAME: z.string().default('Responses'),
+  GOOGLE_SERVICE_ACCOUNT_EMAIL: z.string().optional().default(''),
+  GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: z.string().optional().default(''),
+  GOOGLE_API_KEY: z.string().optional().default(''),
+
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),

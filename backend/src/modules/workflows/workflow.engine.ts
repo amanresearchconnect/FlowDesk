@@ -8,6 +8,7 @@ import { Contact } from '../../models/contact.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
+import { VerificationService } from '../verification/verification.service.js';
 import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { interpolateTemplate } from '../../utils/template.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
@@ -57,7 +58,8 @@ export class WorkflowEngine {
     // Run first step
     await this.executeStep(execution._id.toString(), triggerNode.id);
 
-    return execution;
+    const updated = await WorkflowExecution.findById(execution._id);
+    return updated || execution;
   }
 
   public static async executeStep(executionId: string, stepId: string): Promise<void> {
@@ -194,11 +196,55 @@ export class WorkflowEngine {
           }
         }
 
+        execution.markModified('variables');
         this.logStep(execution, node, 'completed', { operations });
         await execution.save();
 
         if (node.nextStepId) {
           await this.advanceToStep(execution, node.nextStepId);
+        }
+        break;
+      }
+
+      case 'verify_data': {
+        const contact = await Contact.findById(execution.contactId);
+        if (!contact) {
+          execution.status = 'failed';
+          execution.errorDetails = 'Contact record not found during verify_data step';
+          await execution.save();
+          return;
+        }
+
+        const surveyId =
+          interpolateTemplate(node.config?.query?.surveyId || '', {
+            ...contact.toObject(),
+            ...execution.variables
+          }) || execution.variables?.candidateSurveyId || execution.variables?.lastReply;
+
+        const providerName = node.config?.integrationType;
+
+        const verifyResult = await VerificationService.verifyCandidateSubmission({
+          phone: contact.phone,
+          surveyId: surveyId ? String(surveyId).trim() : undefined,
+          providerName
+        });
+
+        const resultVarName = node.config?.resultVariable || 'surveyVerified';
+        execution.variables[resultVarName] = verifyResult.verified;
+        if (verifyResult.surveyId) {
+          execution.variables.verifiedSurveyId = verifyResult.surveyId;
+        }
+
+        execution.markModified('variables');
+        this.logStep(execution, node, 'completed', { query: { phone: contact.phone, surveyId } }, verifyResult);
+        await execution.save();
+
+        const targetStep = verifyResult.verified
+          ? (node.config?.onSuccessStepId || node.nextStepId)
+          : (node.config?.onFailureStepId || node.nextStepId);
+
+        if (targetStep) {
+          await this.advanceToStep(execution, targetStep);
         }
         break;
       }
@@ -334,6 +380,7 @@ export class WorkflowEngine {
 
     execution.variables.lastReply = text;
     execution.variables.lastReplyAt = new Date();
+    execution.markModified('variables');
     execution.status = 'running';
     execution.currentStepId = targetStepId;
 

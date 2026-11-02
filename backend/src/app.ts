@@ -10,6 +10,7 @@ import { campaignsRouter } from './modules/campaigns/campaigns.routes.js';
 import { workflowsRouter } from './modules/workflows/workflows.routes.js';
 import { conversationsRouter } from './modules/conversations/conversations.routes.js';
 import { knowledgeBaseRouter } from './modules/knowledge-base/knowledge-base.routes.js';
+import { integrationsRouter } from './modules/verification/verification.routes.js';
 import { mockWhatsAppRouter } from './modules/mock/mock.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { NotFoundError } from './utils/errors.js';
@@ -50,6 +51,7 @@ export function createApp(): Express {
   apiRouter.use('/workflows', workflowsRouter);
   apiRouter.use('/conversations', conversationsRouter);
   apiRouter.use('/knowledge-base', knowledgeBaseRouter);
+  apiRouter.use('/integrations', integrationsRouter);
   apiRouter.use('/mock/whatsapp', mockWhatsAppRouter);
 
   // RBAC test endpoint for verification

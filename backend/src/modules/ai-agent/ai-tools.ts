@@ -4,6 +4,7 @@ import { Contact } from '../../models/contact.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { WorkflowExecution } from '../../models/workflow-execution.model.js';
 import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service.js';
+import { VerificationService } from '../verification/verification.service.js';
 import { emitToTeam, emitToConversation } from '../../socket/socket.server.js';
 import { normalizePhoneNumber } from '../../utils/phone.js';
 import { logger } from '../../utils/logger.js';
@@ -157,36 +158,24 @@ export async function executeApprovedTool(
       const normalized = normalizePhoneNumber(phone);
       const searchPhone = normalized.isValid && normalized.e164 ? normalized.e164 : phone;
 
-      // In mock/development mode, verify if surveyId has valid format and non-empty
-      const isValidSurvey = surveyId.trim().length >= 3 && !surveyId.toLowerCase().includes('invalid');
-
-      if (isValidSurvey) {
-        // If contact exists, tag them with 'survey_verified'
-        await Contact.updateOne(
-          { phone: searchPhone },
-          { $addToSet: { tags: 'survey_verified' } }
-        );
-
-        return {
-          success: true,
-          toolName,
-          data: {
-            verified: true,
-            surveyId: surveyId.trim(),
-            phone: searchPhone,
-            timestamp: new Date().toISOString()
-          }
-        };
-      }
+      // Query unified verification service
+      const verifyResult = await VerificationService.verifyCandidateSubmission({
+        phone: searchPhone,
+        surveyId: surveyId.trim()
+      });
 
       return {
         success: true,
         toolName,
         data: {
-          verified: false,
-          surveyId: surveyId.trim(),
+          verified: verifyResult.verified,
+          surveyId: verifyResult.surveyId || surveyId.trim(),
           phone: searchPhone,
-          message: 'Survey submission could not be verified in the response ledger.'
+          timestamp: verifyResult.submittedAt || new Date().toISOString(),
+          cached: verifyResult.cached,
+          message: verifyResult.verified
+            ? 'Survey submission verified successfully.'
+            : 'Survey submission could not be verified in the response ledger.'
         }
       };
     }
@@ -264,4 +253,3 @@ export async function executeApprovedTool(
       };
   }
 }
-
