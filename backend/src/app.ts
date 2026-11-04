@@ -12,6 +12,7 @@ import { conversationsRouter } from './modules/conversations/conversations.route
 import { knowledgeBaseRouter } from './modules/knowledge-base/knowledge-base.routes.js';
 import { integrationsRouter } from './modules/verification/verification.routes.js';
 import { mockWhatsAppRouter } from './modules/mock/mock.routes.js';
+import { whatsappWebhookRouter } from './modules/webhooks/whatsapp-webhook.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 import { NotFoundError } from './utils/errors.js';
 import { requireAuth } from './middlewares/auth.middleware.js';
@@ -53,6 +54,7 @@ export function createApp(): Express {
   apiRouter.use('/knowledge-base', knowledgeBaseRouter);
   apiRouter.use('/integrations', integrationsRouter);
   apiRouter.use('/mock/whatsapp', mockWhatsAppRouter);
+  apiRouter.use('/webhooks', whatsappWebhookRouter);
 
   // RBAC test endpoint for verification
   apiRouter.get(
@@ -91,4 +93,3 @@ export function createApp(): Express {
 
   return app;
 }
-

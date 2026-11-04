@@ -1,4 +1,5 @@
 import mongoose, { Types } from 'mongoose';
+import { env } from '../../config/env.js';
 import { Conversation, IConversationDocument, ConversationStatus } from '../../models/conversation.model.js';
 import { Contact } from '../../models/contact.model.js';
 import { Message, IMessageDocument } from '../../models/message.model.js';
@@ -170,7 +171,7 @@ export class ConversationsService {
       direction: 'outbound',
       senderType: 'agent',
       senderUserId: new Types.ObjectId(agentUserId),
-      provider: 'mock',
+      provider: env.MESSAGING_PROVIDER,
       providerMessageId: sendResult.providerMessageId,
       type: 'text',
       content: { body: text.trim() },

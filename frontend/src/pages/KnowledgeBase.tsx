@@ -25,9 +25,10 @@ import { Input } from '../components/ui/Input';
 import { formatDate } from '../lib/utils';
 
 interface KnowledgeArticle {
-  _id: string;
+  id?: string;
+  _id?: string;
   title: string;
-  category: 'recruitment' | 'survey' | 'general';
+  category: 'recruitment' | 'survey' | 'onboarding' | 'general';
   keywords: string[];
   content: string;
   isActive: boolean;
@@ -45,7 +46,7 @@ export const KnowledgeBase: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<'recruitment' | 'survey' | 'general'>('recruitment');
+  const [category, setCategory] = useState<'recruitment' | 'survey' | 'onboarding' | 'general'>('recruitment');
   const [keywords, setKeywords] = useState('');
   const [content, setContent] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -64,9 +65,15 @@ export const KnowledgeBase: React.FC = () => {
   const loadArticles = async () => {
     setIsLoading(true);
     try {
-      const res = await api.get<KnowledgeArticle[]>('/knowledge-base');
+      const res = await api.get<any[]>('/knowledge-base');
       if (res.success && res.data) {
-        setArticles(res.data);
+        const normalized: KnowledgeArticle[] = (res.data || []).map((art: any) => ({
+          ...art,
+          id: art.id || art._id || '',
+          _id: art.id || art._id || '',
+          keywords: Array.isArray(art.keywords) ? art.keywords : [],
+        }));
+        setArticles(normalized);
       }
     } catch (err) {
       console.error('Failed to load knowledge articles:', err);
@@ -87,10 +94,10 @@ export const KnowledgeBase: React.FC = () => {
   };
 
   const handleOpenEditModal = (article: KnowledgeArticle) => {
-    setEditingId(article._id);
+    setEditingId(article.id || article._id || '');
     setTitle(article.title);
     setCategory(article.category);
-    setKeywords(article.keywords.join(', '));
+    setKeywords((article.keywords || []).join(', '));
     setContent(article.content);
     setIsActive(article.isActive);
     setErrorMessage(null);
@@ -289,7 +296,7 @@ export const KnowledgeBase: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredArticles.map((article) => (
                 <Card
-                  key={article._id}
+                  key={article.id || article._id}
                   className="p-5 border-slate-200 bg-white shadow-xs flex flex-col justify-between hover:border-slate-300 transition-colors"
                 >
                   <div>
@@ -328,7 +335,7 @@ export const KnowledgeBase: React.FC = () => {
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => handleDeleteArticle(article._id)}
+                          onClick={() => handleDeleteArticle(article.id || article._id || '')}
                           className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                           title="Delete article"
                         >
@@ -360,7 +367,7 @@ export const KnowledgeBase: React.FC = () => {
 
                   <div className="pt-3 mt-4 border-t border-slate-100 text-[10px] text-slate-400 flex items-center justify-between">
                     <span>Updated {formatDate(article.updatedAt)}</span>
-                    <span className="font-mono text-slate-400">{article._id.slice(-6)}</span>
+                    <span className="font-mono text-slate-400">{(article.id || article._id || '').slice(-6)}</span>
                   </div>
                 </Card>
               ))}
@@ -467,6 +474,7 @@ export const KnowledgeBase: React.FC = () => {
               >
                 <option value="recruitment">Recruitment</option>
                 <option value="survey">Survey</option>
+                <option value="onboarding">Onboarding</option>
                 <option value="general">General</option>
               </select>
             </div>

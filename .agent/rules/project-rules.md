@@ -50,3 +50,8 @@ These rules bind all software development within the FlowDesk codebase.
 - Test workflows end-to-end using `MockWhatsAppProvider` and `MockAIProvider`.
 - When modifying existing code, first inspect related files and tests to avoid breaking existing contracts.
 
+
+## 7. Version control and commit policy
+
+- **Explicit user approval required for commits**: Never execute `git commit` or `git push` directly without first presenting the proposed changes, explaining what will be committed, and asking for explicit user approval.
+- **Git author identity**: All commits must be attributed strictly to `amanresearchconnect <amanresearchconnect@users.noreply.github.com>`.

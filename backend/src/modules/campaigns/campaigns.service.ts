@@ -68,7 +68,9 @@ export class CampaignsService {
       throw new NotFoundError('Campaign not found');
     }
 
-    if (campaign.status !== 'draft' && campaign.status !== 'paused') {
+    // Allow launching if in draft, paused, or if previous launch experienced failures
+    const hasFailures = (campaign.stats?.failed || 0) > 0;
+    if (campaign.status !== 'draft' && campaign.status !== 'paused' && !hasFailures) {
       throw new ValidationError(`Cannot launch campaign with status '${campaign.status}'`);
     }
 
@@ -124,7 +126,7 @@ export class CampaignsService {
           campaignId: campaign._id,
           direction: 'outbound',
           senderType: 'system',
-          provider: 'mock',
+          provider: 'meta',
           providerMessageId: sendResult.providerMessageId,
           type: 'text',
           content: { body: personalizedBody },
@@ -159,6 +161,17 @@ export class CampaignsService {
       totalEnrolled: contacts.length,
       dispatched: dispatchedCount
     };
+  }
+
+  public static async deleteCampaign(campaignId: string): Promise<boolean> {
+    if (!mongoose.isValidObjectId(campaignId)) {
+      throw new ValidationError('Invalid campaign ID format');
+    }
+    const result = await Campaign.findByIdAndDelete(campaignId);
+    if (!result) {
+      throw new NotFoundError('Campaign not found');
+    }
+    return true;
   }
 
   public static async getCampaignStats(campaignId: string): Promise<{
@@ -221,4 +234,3 @@ export class CampaignsService {
     return campaign.toSafeObject();
   }
 }
-

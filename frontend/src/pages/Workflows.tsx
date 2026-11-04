@@ -32,27 +32,39 @@ interface WorkflowStep {
     | 'send_message'
     | 'wait_for_reply'
     | 'ai_agent'
+    | 'ai_conversation'
     | 'verify_data'
     | 'condition_branch'
+    | 'condition'
     | 'update_contact'
-    | 'delay';
+    | 'update_record'
+    | 'delay'
+    | string;
   config: Record<string, any>;
   nextStepId?: string;
   onSuccessStepId?: string;
   onFailureStepId?: string;
+  branches?: Array<{
+    conditionType: string;
+    conditionValue?: string | null;
+    targetStepId: string;
+  }>;
 }
 
 interface WorkflowItem {
-  _id: string;
+  id: string;
+  _id?: string;
   name: string;
   description?: string;
   status: 'draft' | 'published' | 'archived';
+  isPublished?: boolean;
   version: number;
-  trigger: {
+  trigger?: {
     type: string;
     keywords?: string[];
   };
   steps: WorkflowStep[];
+  nodes?: any[];
   createdAt: string;
   updatedAt: string;
 }
@@ -92,17 +104,56 @@ export const Workflows: React.FC = () => {
   const loadWorkflows = async () => {
     setIsLoading(true);
     try {
-      const res = await api.get<WorkflowItem[]>('/workflows');
+      const res = await api.get<any[]>('/workflows');
       if (res.success && res.data && res.data.length > 0) {
-        setWorkflows(res.data);
-        setSelectedWorkflow(res.data[0]);
-        if (res.data[0].steps && res.data[0].steps.length > 0) {
-          setSelectedStep(res.data[0].steps[0]);
+        const normalizedWorkflows: WorkflowItem[] = res.data.map((w: any) => {
+          const rawNodes = w.nodes || w.steps || [];
+          const steps: WorkflowStep[] = rawNodes.map((node: any) => {
+            const successBranch = node.branches?.find((b: any) => b.conditionType === 'equals');
+            const defaultBranch = node.branches?.find((b: any) => b.conditionType === 'default');
+
+            return {
+              id: node.id || `step_${Math.random().toString(36).substring(2, 7)}`,
+              name: node.name || 'Workflow Step',
+              type: node.type || 'send_message',
+              config: node.config || {},
+              nextStepId: node.nextStepId,
+              branches: node.branches || [],
+              onSuccessStepId: successBranch ? successBranch.targetStepId : node.onSuccessStepId,
+              onFailureStepId: defaultBranch ? defaultBranch.targetStepId : node.onFailureStepId,
+            };
+          });
+
+          const wfId = w.id || w._id || '';
+
+          return {
+            id: wfId,
+            _id: wfId,
+            name: w.name,
+            description: w.description,
+            status: w.isPublished ? 'published' : 'draft',
+            isPublished: w.isPublished,
+            version: w.version || 1,
+            trigger: w.trigger || { type: 'inbound_message' },
+            steps,
+            createdAt: w.createdAt || new Date().toISOString(),
+            updatedAt: w.updatedAt || new Date().toISOString(),
+          };
+        });
+
+        setWorkflows(normalizedWorkflows);
+        const first = normalizedWorkflows[0];
+        setSelectedWorkflow(first);
+        if (first.steps && first.steps.length > 0) {
+          setSelectedStep(first.steps[0]);
         }
-        loadExecutions(res.data[0]._id);
+        if (first.id) {
+          loadExecutions(first.id);
+        }
       } else {
         // Provide standard recruitment DAG structure if database has not yet seeded workflows
         const fallbackWorkflow: WorkflowItem = {
+          id: 'wf-recruitment-01',
           _id: 'wf-recruitment-01',
           name: 'End-to-End Recruitment & Survey Verification',
           description:
@@ -141,7 +192,7 @@ export const Workflows: React.FC = () => {
             {
               id: 'step_4_ai_qa',
               name: 'AI Conversational Assistant Q&A',
-              type: 'ai_agent',
+              type: 'ai_conversation',
               config: {
                 model: 'gemini-1.5-flash',
                 grounding: 'knowledge_base',
@@ -167,7 +218,7 @@ export const Workflows: React.FC = () => {
             {
               id: 'step_6_route_interview',
               name: 'Tag survey_verified & Schedule Technical Round',
-              type: 'update_contact',
+              type: 'update_record',
               config: {
                 addTags: ['survey_verified', 'interview_scheduled'],
                 status: 'qualified'
@@ -189,6 +240,7 @@ export const Workflows: React.FC = () => {
         setWorkflows([fallbackWorkflow]);
         setSelectedWorkflow(fallbackWorkflow);
         setSelectedStep(fallbackWorkflow.steps[0]);
+        loadExecutions(fallbackWorkflow.id);
       }
     } catch (err: any) {
       console.error('Failed to load workflows:', err);
@@ -197,16 +249,13 @@ export const Workflows: React.FC = () => {
     }
   };
 
-  const loadExecutions = async (workflowId: string) => {
-    try {
-      const res = await api.get<ExecutionItem[]>(
-        `/workflows/${workflowId}/executions`
-      );
-      if (res.success && res.data) {
-        setExecutions(res.data);
-      }
-    } catch (err) {
-      // Mock historical runs if empty
+  const loadExecutions = async (workflowId?: string) => {
+    if (!workflowId || workflowId === 'undefined' || typeof workflowId !== 'string') {
+      return;
+    }
+
+    const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(workflowId);
+    if (!isValidObjectId) {
       setExecutions([
         {
           _id: 'exec-101',
@@ -221,7 +270,7 @@ export const Workflows: React.FC = () => {
         {
           _id: 'exec-102',
           workflowId,
-          contactId: { phoneNumber: '+919820011223', firstName: 'Rahul' },
+          contactId: { phoneNumber: '+919876543211', firstName: 'Rahul' },
           status: 'in_progress',
           currentStepId: 'step_4_ai_qa',
           variables: { queryCount: 2 },
@@ -239,10 +288,56 @@ export const Workflows: React.FC = () => {
           updatedAt: new Date(Date.now() - 1.8 * 3600 * 1000).toISOString()
         }
       ]);
+      return;
+    }
+
+    try {
+      const res = await api.get<ExecutionItem[]>(
+        `/workflows/${workflowId}/executions`
+      );
+      if (res.success && res.data && res.data.length > 0) {
+        setExecutions(res.data);
+      } else {
+        // Fallback sample runs for immediate demo inspectability
+        setExecutions([
+          {
+            _id: 'exec-101',
+            workflowId,
+            contactId: { phoneNumber: '+919876543210', firstName: 'Priya' },
+            status: 'completed',
+            currentStepId: 'step_6_route_interview',
+            variables: { surveyVerified: true, score: 92 },
+            createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString()
+          },
+          {
+            _id: 'exec-102',
+            workflowId,
+            contactId: { phoneNumber: '+919876543211', firstName: 'Rahul' },
+            status: 'in_progress',
+            currentStepId: 'step_4_ai_qa',
+            variables: { queryCount: 2 },
+            createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+            updatedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString()
+          },
+          {
+            _id: 'exec-103',
+            workflowId,
+            contactId: { phoneNumber: '+12025550199', firstName: 'David' },
+            status: 'completed',
+            currentStepId: 'step_6_route_interview',
+            variables: { surveyVerified: true, score: 85 },
+            createdAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+            updatedAt: new Date(Date.now() - 1.8 * 3600 * 1000).toISOString()
+          }
+        ]);
+      }
+    } catch (err) {
+      console.error('Failed to load executions:', err);
     }
   };
 
-  const getNodeIcon = (type: WorkflowStep['type']) => {
+  const getNodeIcon = (type: string) => {
     switch (type) {
       case 'trigger':
         return <Radio className="w-4 h-4 text-sky-500" />;
@@ -251,12 +346,15 @@ export const Workflows: React.FC = () => {
       case 'wait_for_reply':
         return <Clock className="w-4 h-4 text-amber-500" />;
       case 'ai_agent':
+      case 'ai_conversation':
         return <Cpu className="w-4 h-4 text-indigo-500" />;
       case 'verify_data':
         return <FileSpreadsheet className="w-4 h-4 text-emerald-600" />;
       case 'condition_branch':
+      case 'condition':
         return <GitBranch className="w-4 h-4 text-purple-500" />;
       case 'update_contact':
+      case 'update_record':
         return <CheckCircle2 className="w-4 h-4 text-emerald-600" />;
       default:
         return <Layers className="w-4 h-4 text-slate-500" />;
@@ -328,19 +426,19 @@ export const Workflows: React.FC = () => {
               Selected Flow:
             </label>
             <select
-              value={selectedWorkflow?._id || ''}
+              value={selectedWorkflow?.id || selectedWorkflow?._id || ''}
               onChange={(e) => {
-                const wf = workflows.find((w) => w._id === e.target.value);
+                const wf = workflows.find((w) => (w.id === e.target.value || w._id === e.target.value));
                 if (wf) {
                   setSelectedWorkflow(wf);
                   setSelectedStep(wf.steps[0] || null);
-                  loadExecutions(wf._id);
+                  loadExecutions(wf.id || wf._id);
                 }
               }}
               className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             >
               {workflows.map((wf) => (
-                <option key={wf._id} value={wf._id}>
+                <option key={wf.id || wf._id} value={wf.id || wf._id}>
                   {wf.name} (v{wf.version})
                 </option>
               ))}
@@ -383,9 +481,9 @@ export const Workflows: React.FC = () => {
             {/* Visual DAG Flow Canvas */}
             <div className="flex-1 overflow-y-auto p-8 bg-slate-100/70 border-r border-slate-200 flex flex-col items-center">
               <div className="w-full max-w-xl space-y-4 py-2">
-                {selectedWorkflow?.steps.map((step, idx) => {
+                {(selectedWorkflow?.steps || []).map((step, idx) => {
                   const isSelected = selectedStep?.id === step.id;
-                  const isBranchNode = step.type === 'verify_data' || step.type === 'condition_branch';
+                  const isBranchNode = step.type === 'verify_data' || step.type === 'condition_branch' || step.type === 'condition';
 
                   return (
                     <React.Fragment key={step.id}>
@@ -454,10 +552,16 @@ export const Workflows: React.FC = () => {
                               Keywords: HI, APPLY, JOB
                             </span>
                           )}
-                          {step.type === 'update_contact' && (
+                          {(step.type === 'update_contact' || step.type === 'update_record') && (
                             <span className="inline-flex items-center gap-1.5 text-emerald-700">
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               Auto-Tag: survey_verified
+                            </span>
+                          )}
+                          {(step.type === 'ai_agent' || step.type === 'ai_conversation') && (
+                            <span className="inline-flex items-center gap-1.5 text-indigo-700">
+                              <Cpu className="w-3.5 h-3.5" />
+                              AI RAG Grounding Assistant
                             </span>
                           )}
                         </div>
@@ -552,7 +656,7 @@ export const Workflows: React.FC = () => {
                     </div>
                   )}
 
-                  {selectedStep.type === 'ai_agent' && (
+                  {(selectedStep.type === 'ai_agent' || selectedStep.type === 'ai_conversation') && (
                     <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-800 space-y-1.5">
                       <p className="font-semibold flex items-center gap-1.5">
                         <Cpu className="w-4 h-4 text-indigo-600" />
@@ -561,6 +665,19 @@ export const Workflows: React.FC = () => {
                       <p className="text-[11px] text-indigo-700 leading-relaxed">
                         Grounded strictly on Knowledge Base articles. Sandboxed tools with Zod validation.
                         Escalates to human operator if user requests human or confidence drops below 0.60.
+                      </p>
+                    </div>
+                  )}
+
+                  {(selectedStep.type === 'update_contact' || selectedStep.type === 'update_record') && (
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1.5">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Candidate State & Tagging
+                      </p>
+                      <p className="text-[11px] text-emerald-700 leading-relaxed">
+                        Applies qualified status, tags contact with <code className="bg-emerald-100 px-1 rounded">survey_verified</code>,
+                        and schedules interview rounds.
                       </p>
                     </div>
                   )}

@@ -3,12 +3,15 @@ import {
   Send,
   Plus,
   Play,
+  RotateCcw,
+  Trash2,
   CheckCircle2,
   Eye,
   MessageSquare,
   Users,
   Clock,
-  Layers
+  Layers,
+  AlertCircle
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button } from '../components/ui/Button.js';
@@ -39,13 +42,15 @@ interface CampaignItem {
 }
 
 interface ContactListItem {
-  id: string;
+  id?: string;
+  _id?: string;
   name: string;
   totalCount: number;
 }
 
 interface WorkflowItem {
-  id: string;
+  id?: string;
+  _id?: string;
   name: string;
 }
 
@@ -73,15 +78,31 @@ export const Campaigns: React.FC = () => {
         api.get('/workflows')
       ]);
 
-      setCampaigns(campRes.data);
-      setContactLists(listRes.data);
-      setWorkflows(wfRes.data);
+      const normalizedLists = (listRes.data || []).map((l: any) => ({
+        ...l,
+        id: l.id || l._id,
+        _id: l.id || l._id
+      }));
+      const normalizedWfs = (wfRes.data || []).map((w: any) => ({
+        ...w,
+        id: w.id || w._id,
+        _id: w.id || w._id
+      }));
+      const normalizedCamps = (campRes.data || []).map((c: any) => ({
+        ...c,
+        id: c.id || c._id,
+        _id: c.id || c._id
+      }));
 
-      if (listRes.data.length > 0 && !selectedListId) {
-        setSelectedListId(listRes.data[0].id);
+      setCampaigns(normalizedCamps);
+      setContactLists(normalizedLists);
+      setWorkflows(normalizedWfs);
+
+      if (normalizedLists.length > 0 && !selectedListId) {
+        setSelectedListId(normalizedLists[0].id);
       }
-      if (wfRes.data.length > 0 && !selectedWorkflowId) {
-        setSelectedWorkflowId(wfRes.data[0].id);
+      if (normalizedWfs.length > 0 && !selectedWorkflowId) {
+        setSelectedWorkflowId(normalizedWfs[0].id);
       }
     } catch (err) {
       console.error('Failed to load campaigns data:', err);
@@ -119,10 +140,27 @@ export const Campaigns: React.FC = () => {
 
   const handleLaunchCampaign = async (campaignId: string) => {
     try {
-      await api.post(`/campaigns/${campaignId}/launch`);
+      const res = await api.post(`/campaigns/${campaignId}/launch`);
+      if (res.data?.data?.dispatched === 0 && res.data?.data?.failed > 0) {
+        alert(
+          `Warning: 0 of ${res.data.data.totalEnrolled} messages were sent. Meta rejected the dispatches (check if access token expired or numbers are registered).`
+        );
+      }
       fetchData();
     } catch (err: any) {
       alert(`Campaign launch failed: ${err.message}`);
+    }
+  };
+
+  const handleDeleteCampaign = async (campaignId: string) => {
+    if (!window.confirm('Are you sure you want to delete this campaign? This action cannot be undone.')) {
+      return;
+    }
+    try {
+      await api.delete(`/campaigns/${campaignId}`);
+      fetchData();
+    } catch (err: any) {
+      alert(`Failed to delete campaign: ${err.message}`);
     }
   };
 
@@ -226,9 +264,15 @@ export const Campaigns: React.FC = () => {
                     <td className="px-4 py-3 font-semibold text-slate-900">{camp.name}</td>
                     <td className="px-4 py-3">
                       {camp.status === 'running' && (
-                        <Badge variant="emerald" dot>
-                          Running
-                        </Badge>
+                        (camp.stats?.failed || 0) > 0 && (camp.stats?.dispatched || 0) === 0 ? (
+                          <Badge variant="rose" dot>
+                            Failed ({camp.stats.failed})
+                          </Badge>
+                        ) : (
+                          <Badge variant="emerald" dot>
+                            Running
+                          </Badge>
+                        )
                       )}
                       {camp.status === 'completed' && <Badge variant="default">Completed</Badge>}
                       {camp.status === 'draft' && <Badge variant="default">Draft</Badge>}
@@ -241,7 +285,14 @@ export const Campaigns: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-700">
-                      {camp.stats?.dispatched || 0} / {camp.stats?.totalContacts || 0}
+                      <div>
+                        {camp.stats?.dispatched || 0} / {camp.stats?.totalContacts || 0}
+                      </div>
+                      {(camp.stats?.failed || 0) > 0 && (
+                        <div className="text-[10px] text-rose-500 font-medium">
+                          {camp.stats.failed} failed
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-emerald-700 font-medium">
                       {camp.stats?.delivered || 0}
@@ -251,23 +302,47 @@ export const Campaigns: React.FC = () => {
                       {camp.stats?.replied || 0}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {camp.status === 'draft' && (
+                      <div className="flex items-center justify-end gap-1.5">
+                        {camp.status === 'draft' && (
+                          <Button
+                            size="xs"
+                            variant="primary"
+                            onClick={() => handleLaunchCampaign(camp.id)}
+                          >
+                            <Play className="w-3 h-3 mr-1" /> Launch
+                          </Button>
+                        )}
+                        {(camp.status === 'running' || camp.status === 'completed') && (
+                          <>
+                            {(camp.stats?.failed || 0) > 0 ? (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                                onClick={() => handleLaunchCampaign(camp.id)}
+                                title="Retry failed dispatches"
+                              >
+                                <RotateCcw className="w-3 h-3 mr-1" /> Retry
+                              </Button>
+                            ) : camp.status === 'running' ? (
+                              <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                <Clock className="w-3 h-3 animate-spin" /> Dispatched
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-medium text-slate-400">Archived</span>
+                            )}
+                          </>
+                        )}
                         <Button
                           size="xs"
-                          variant="primary"
-                          onClick={() => handleLaunchCampaign(camp.id)}
+                          variant="ghost"
+                          className="text-slate-400 hover:text-rose-600 p-1"
+                          onClick={() => handleDeleteCampaign(camp.id)}
+                          title="Delete Campaign"
                         >
-                          <Play className="w-3 h-3 mr-1" /> Launch
+                          <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      )}
-                      {camp.status === 'running' && (
-                        <span className="text-[11px] font-semibold text-emerald-600 flex items-center justify-end gap-1">
-                          <Clock className="w-3 h-3 animate-spin" /> Dispatched
-                        </span>
-                      )}
-                      {camp.status === 'completed' && (
-                        <span className="text-[11px] font-medium text-slate-400">Archived</span>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))

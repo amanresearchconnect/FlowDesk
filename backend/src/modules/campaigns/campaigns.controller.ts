@@ -41,6 +41,23 @@ export class CampaignsController {
     }
   }
 
+  public static async deleteCampaign(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      await CampaignsService.deleteCampaign(req.params.id);
+
+      res.status(200).json({
+        success: true,
+        message: 'Campaign deleted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public static async getStats(
     req: Request,
     res: Response,
@@ -100,4 +117,3 @@ export class CampaignsController {
     }
   }
 }
-

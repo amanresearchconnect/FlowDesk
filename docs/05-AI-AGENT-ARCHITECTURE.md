@@ -32,7 +32,6 @@ flowchart TD
     Decision -->|"Low Confidence / Help Flag"| Escalation["Escalate to Human Inbox"]
     Escalation --> SocketAlert["Socket.IO Alert to Team"]
 ```
-
 ## Provider abstraction (`IAIProvider`)
 
 The platform defines a provider-agnostic interface:
@@ -43,7 +42,6 @@ export interface IAIToolDefinition {
   description: string;
   parameters: Record<string, any>; // JSON Schema
 }
-
 export interface IAIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content?: string;

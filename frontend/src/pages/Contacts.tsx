@@ -26,8 +26,10 @@ import { Input } from '../components/ui/Input';
 import { formatDate } from '../lib/utils';
 
 interface Contact {
-  _id: string;
-  phoneNumber: string;
+  id?: string;
+  _id?: string;
+  phoneNumber?: string;
+  phone?: string;
   firstName?: string;
   lastName?: string;
   email?: string;
@@ -35,14 +37,17 @@ interface Contact {
   optInStatus: string;
   customFields?: Record<string, any>;
   contactListId?: {
-    _id: string;
+    _id?: string;
+    id?: string;
     name: string;
   };
+  contactListIds?: string[];
   createdAt: string;
 }
 
 interface ContactList {
-  _id: string;
+  id?: string;
+  _id?: string;
   name: string;
   description?: string;
   totalCount: number;
@@ -52,18 +57,27 @@ interface ContactList {
 interface UploadPreviewResponse {
   fileToken: string;
   headers: string[];
+  detectedHeaders?: string[];
   previewRows: Record<string, any>[];
+  sampleRows?: Record<string, any>[];
   rowCount: number;
+  totalRows?: number;
   fileName: string;
+  originalFileName?: string;
 }
 
 interface ImportSummary {
   listId: string;
+  contactListId?: string;
   listName: string;
   totalProcessed: number;
+  totalRows?: number;
   imported: number;
+  validCount?: number;
   duplicatesSkipped: number;
+  duplicateCount?: number;
   invalidSkipped: number;
+  errorCount?: number;
 }
 
 export const Contacts: React.FC = () => {
@@ -113,15 +127,28 @@ export const Contacts: React.FC = () => {
     setIsLoading(true);
     try {
       const [contactsRes, listsRes] = await Promise.all([
-        api.get<Contact[]>('/contacts?limit=100'),
-        api.get<ContactList[]>('/contact-lists')
+        api.get<any[]>('/contacts?limit=100'),
+        api.get<any[]>('/contact-lists')
       ]);
 
       if (contactsRes.success && contactsRes.data) {
-        setContacts(contactsRes.data);
+        const normalizedContacts = (contactsRes.data || []).map((c: any) => ({
+          ...c,
+          id: c.id || c._id,
+          _id: c.id || c._id,
+          phone: c.phone || c.phoneNumber || '',
+          phoneNumber: c.phoneNumber || c.phone || '',
+          tags: Array.isArray(c.tags) ? c.tags : []
+        }));
+        setContacts(normalizedContacts);
       }
       if (listsRes.success && listsRes.data) {
-        setContactLists(listsRes.data);
+        const normalizedLists = (listsRes.data || []).map((l: any) => ({
+          ...l,
+          id: l.id || l._id,
+          _id: l.id || l._id
+        }));
+        setContactLists(normalizedLists);
       }
     } catch (err: any) {
       console.error('Failed to load contacts data:', err);
@@ -161,31 +188,48 @@ export const Contacts: React.FC = () => {
     formData.append('file', selectedFile);
 
     try {
-      const res = await api.post<UploadPreviewResponse>('/contacts/upload-preview', formData);
+      const res = await api.post<any>('/contacts/upload-preview', formData);
 
-      if (res && res.data && res.data.headers) {
-        setPreviewData(res.data);
+      if (res && res.data) {
+        const raw = res.data;
+        const headers: string[] = raw.detectedHeaders || raw.headers || [];
+        const previewRows: Record<string, any>[] = raw.sampleRows || raw.previewRows || [];
+        const rowCount = raw.totalRows !== undefined ? raw.totalRows : raw.rowCount || previewRows.length || 0;
+        const fileName = raw.originalFileName || raw.fileName || selectedFile.name;
+
+        setPreviewData({
+          fileToken: raw.fileToken,
+          headers,
+          detectedHeaders: headers,
+          previewRows,
+          sampleRows: previewRows,
+          rowCount,
+          totalRows: rowCount,
+          fileName,
+          originalFileName: fileName
+        });
+
         // Smart auto-detect column mappings
-        const headersLower = res.data.headers.map((h: string) => h.toLowerCase());
+        const headersLower = headers.map((h: string) => h.toLowerCase());
         const phoneIdx = headersLower.findIndex((h: string) =>
           h.includes('phone') || h.includes('mobile') || h.includes('whatsapp') || h.includes('contact') || h.includes('number')
         );
-        if (phoneIdx !== -1) setPhoneColumn(res.data.headers[phoneIdx]);
+        if (phoneIdx !== -1) setPhoneColumn(headers[phoneIdx]);
 
         const firstIdx = headersLower.findIndex((h: string) =>
           h.includes('first') || h.includes('fname') || (h.includes('name') && !h.includes('last'))
         );
-        if (firstIdx !== -1) setFirstNameColumn(res.data.headers[firstIdx]);
+        if (firstIdx !== -1) setFirstNameColumn(headers[firstIdx]);
 
         const lastIdx = headersLower.findIndex((h: string) =>
           h.includes('last') || h.includes('lname') || h.includes('surname')
         );
-        if (lastIdx !== -1) setLastNameColumn(res.data.headers[lastIdx]);
+        if (lastIdx !== -1) setLastNameColumn(headers[lastIdx]);
 
         const emailIdx = headersLower.findIndex((h: string) =>
           h.includes('email') || h.includes('mail')
         );
-        if (emailIdx !== -1) setEmailColumn(res.data.headers[emailIdx]);
+        if (emailIdx !== -1) setEmailColumn(headers[emailIdx]);
 
         setImportStep(2);
       }
@@ -221,9 +265,17 @@ export const Contacts: React.FC = () => {
         }
       };
 
-      const res = await api.post<ImportSummary>('/contacts/import', payload);
+      const res = await api.post<any>('/contacts/import', payload);
       if (res.data) {
-        setImportResult(res.data);
+        const raw = res.data;
+        setImportResult({
+          listId: raw.contactListId || raw.listId || '',
+          listName: raw.listName || listName.trim(),
+          totalProcessed: raw.totalRows !== undefined ? raw.totalRows : raw.totalProcessed || 0,
+          imported: raw.validCount !== undefined ? raw.validCount : raw.imported || 0,
+          duplicatesSkipped: raw.duplicateCount !== undefined ? raw.duplicateCount : raw.duplicatesSkipped || 0,
+          invalidSkipped: raw.errorCount !== undefined ? raw.errorCount : raw.invalidSkipped || 0
+        });
       }
       setImportStep(3);
       loadData();
@@ -251,7 +303,7 @@ export const Contacts: React.FC = () => {
   // Filtered contacts
   const filteredContacts = contacts.filter((c) => {
     const fullName = `${c.firstName || ''} ${c.lastName || ''}`.toLowerCase();
-    const phone = c.phoneNumber || '';
+    const phone = c.phoneNumber || c.phone || '';
     const matchesSearch =
       !search ||
       fullName.includes(search.toLowerCase()) ||
@@ -260,6 +312,8 @@ export const Contacts: React.FC = () => {
     const matchesList =
       selectedListId === 'all' ||
       c.contactListId?._id === selectedListId ||
+      c.contactListId?.id === selectedListId ||
+      c.contactListIds?.includes(selectedListId) ||
       c.contactListId === (selectedListId as any);
 
     const isVerified = c.tags?.includes('survey_verified');
@@ -460,7 +514,7 @@ export const Contacts: React.FC = () => {
                 >
                   <option value="all">All Ingestion Lists</option>
                   {contactLists.map((l) => (
-                    <option key={l._id} value={l._id}>
+                    <option key={l.id || l._id} value={l.id || l._id}>
                       {l.name} ({l.totalCount})
                     </option>
                   ))}
@@ -518,7 +572,7 @@ export const Contacts: React.FC = () => {
                         (contact.firstName?.[0] || '') + (contact.lastName?.[0] || '') || 'C';
 
                       return (
-                        <tr key={contact._id} className="hover:bg-slate-50/80 transition-colors group">
+                        <tr key={contact.id || contact._id} className="hover:bg-slate-50/80 transition-colors group">
                           {/* Name & Avatar */}
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-3">
@@ -542,7 +596,7 @@ export const Contacts: React.FC = () => {
 
                           {/* Phone Number */}
                           <td className="py-3 px-4 font-mono font-medium text-slate-700">
-                            {contact.phoneNumber}
+                            {contact.phoneNumber || contact.phone}
                           </td>
 
                           {/* Ingestion List */}
@@ -630,7 +684,7 @@ export const Contacts: React.FC = () => {
         {activeTab === 'lists' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto">
             {contactLists.map((list) => (
-              <Card key={list._id} className="p-5 border-slate-200 bg-white shadow-xs flex flex-col justify-between">
+              <Card key={list.id || list._id} className="p-5 border-slate-200 bg-white shadow-xs flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between">
                     <div className="w-9 h-9 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
@@ -650,7 +704,7 @@ export const Contacts: React.FC = () => {
                   <span>Created {formatDate(list.createdAt)}</span>
                   <button
                     onClick={() => {
-                      setSelectedListId(list._id);
+                      setSelectedListId(list.id || list._id || '');
                       setActiveTab('contacts');
                     }}
                     className="text-emerald-600 hover:text-emerald-700 font-medium inline-flex items-center gap-1"

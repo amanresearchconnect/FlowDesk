@@ -24,6 +24,7 @@ export function connectSocket(token: string): Socket {
 
   socket.on('connect', () => {
     // Join team inbox room automatically
+    socket?.emit('join:inbox');
     socket?.emit('inbox:join');
   });
 

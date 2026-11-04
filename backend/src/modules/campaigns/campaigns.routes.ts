@@ -23,6 +23,13 @@ router.post(
   CampaignsController.launchCampaign
 );
 
+router.delete(
+  '/:id',
+  requireAuth,
+  requireRole(['admin', 'manager']),
+  CampaignsController.deleteCampaign
+);
+
 // Campaign inspection & stats
 router.get(
   '/:id/stats',
@@ -43,4 +50,3 @@ router.get(
 );
 
 export const campaignsRouter = router;
-
