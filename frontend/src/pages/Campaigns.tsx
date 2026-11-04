@@ -11,7 +11,9 @@ import {
   Users,
   Clock,
   Layers,
-  AlertCircle
+  AlertCircle,
+  GitBranch,
+  Sparkles
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button } from '../components/ui/Button.js';
@@ -29,6 +31,11 @@ interface CampaignItem {
     name: string;
     totalCount: number;
   };
+  workflowId?: {
+    id: string;
+    name: string;
+  };
+  buttons?: Array<{ id: string; title: string }>;
   stats: {
     totalContacts: number;
     dispatched: number;
@@ -65,8 +72,13 @@ export const Campaigns: React.FC = () => {
   const [name, setName] = useState('');
   const [selectedListId, setSelectedListId] = useState('');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const [useInteractiveButtons, setUseInteractiveButtons] = useState(true);
+  const [buttons, setButtons] = useState<Array<{ id: string; title: string }>>([
+    { id: 'btn_yes', title: 'YES' },
+    { id: 'btn_no', title: 'NO' }
+  ]);
   const [messageTemplate, setMessageTemplate] = useState(
-    'Hi {{firstName}}, are you interested in the {{roleApplied}} role? Reply YES or NO to proceed.'
+    'Hi {{firstName}}, are you interested in the {{roleApplied}} role? Tap an option below:'
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -117,15 +129,16 @@ export const Campaigns: React.FC = () => {
 
   const handleCreateCampaign = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !selectedListId || !selectedWorkflowId) return;
+    if (!name.trim() || !selectedListId) return;
 
     setIsSubmitting(true);
     try {
       await api.post('/campaigns', {
         name: name.trim(),
         contactListId: selectedListId,
-        workflowId: selectedWorkflowId,
-        messageTemplate
+        workflowId: selectedWorkflowId || null,
+        messageTemplate,
+        buttons: useInteractiveButtons ? buttons : []
       });
 
       setIsCreateModalOpen(false);
@@ -261,7 +274,23 @@ export const Campaigns: React.FC = () => {
               ) : (
                 campaigns.map((camp) => (
                   <tr key={camp.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-4 py-3 font-semibold text-slate-900">{camp.name}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">
+                      <div>{camp.name}</div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        {camp.workflowId && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                            <GitBranch className="w-2.5 h-2.5" />
+                            {camp.workflowId.name || 'Workflow'}
+                          </span>
+                        )}
+                        {camp.buttons && camp.buttons.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                            <MessageSquare className="w-2.5 h-2.5 text-emerald-600" />
+                            Buttons ({camp.buttons.map((b) => b.title).join(' / ')})
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3">
                       {camp.status === 'running' && (
                         (camp.stats?.failed || 0) > 0 && (camp.stats?.dispatched || 0) === 0 ? (
@@ -392,11 +421,11 @@ export const Campaigns: React.FC = () => {
                 className="flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 value={selectedWorkflowId}
                 onChange={(e) => setSelectedWorkflowId(e.target.value)}
-                required
               >
+                <option value="">None (Standard Broadcast)</option>
                 {workflows.map((wf) => (
                   <option key={wf.id} value={wf.id}>
-                    {wf.name}
+                    ⚡ {wf.name}
                   </option>
                 ))}
               </select>
@@ -419,6 +448,90 @@ export const Campaigns: React.FC = () => {
               onChange={(e) => setMessageTemplate(e.target.value)}
               required
             />
+          </div>
+
+          {/* Interactive Quick-Reply Buttons (YES / NO) */}
+          <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-emerald-950 flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useInteractiveButtons}
+                  onChange={(e) => setUseInteractiveButtons(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                />
+                Include Native WhatsApp Buttons (e.g. YES / NO)
+              </label>
+              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                Meta Interactive API
+              </span>
+            </div>
+
+            {useInteractiveButtons && (
+              <div className="space-y-2.5 pt-1">
+                <p className="text-[11px] text-slate-600">
+                  Clickable buttons appear directly on the candidate's phone under the message. Tapping an option branches your automated workflow without manual typing.
+                </p>
+                <div className="flex items-center gap-2">
+                  {buttons.map((btn, idx) => (
+                    <div
+                      key={idx}
+                      className="flex-1 flex items-center gap-1.5 bg-white p-1.5 rounded-lg border border-emerald-300 shadow-2xs"
+                    >
+                      <span className="text-[10px] font-bold text-slate-400 pl-1">#{idx + 1}</span>
+                      <input
+                        type="text"
+                        maxLength={20}
+                        value={btn.title}
+                        onChange={(e) => {
+                          const updated = [...buttons];
+                          updated[idx] = { ...updated[idx], title: e.target.value };
+                          setButtons(updated);
+                        }}
+                        className="w-full text-xs font-bold text-emerald-900 focus:outline-none"
+                        placeholder="Button Title"
+                      />
+                    </div>
+                  ))}
+                  {buttons.length < 3 && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      className="text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                      onClick={() =>
+                        setButtons([...buttons, { id: `btn_${buttons.length + 1}`, title: 'MORE INFO' }])
+                      }
+                    >
+                      + Button
+                    </Button>
+                  )}
+                </div>
+
+                {/* Mobile Preview Box */}
+                <div className="mt-2 p-3 bg-emerald-900/5 rounded-lg border border-emerald-200/80">
+                  <span className="text-[10px] uppercase font-bold text-emerald-800 block mb-1.5">
+                    WhatsApp Recipient Screen Preview:
+                  </span>
+                  <div className="bg-white p-3 rounded-xl shadow-xs space-y-2 max-w-sm border border-slate-100">
+                    <p className="text-slate-800 text-xs font-sans leading-relaxed">
+                      {messageTemplate.replace('{{firstName}}', 'Aman').replace('{{roleApplied}}', 'Full Stack Engineer')}
+                    </p>
+                    <div className="border-t border-slate-100 pt-2 flex flex-col gap-1.5">
+                      {buttons.map((btn, idx) => (
+                        <div
+                          key={idx}
+                          className="w-full text-center py-1.5 px-3 rounded-lg bg-slate-50 border border-emerald-200 text-emerald-700 font-bold text-xs shadow-2xs flex items-center justify-center gap-1.5"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          {btn.title || `Button ${idx + 1}`}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">

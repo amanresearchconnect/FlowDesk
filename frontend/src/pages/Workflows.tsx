@@ -15,7 +15,8 @@ import {
   RefreshCw,
   Plus,
   Send,
-  MessageSquare
+  MessageSquare,
+  Sparkles
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -23,6 +24,7 @@ import { Badge } from '../components/ui/Badge';
 import { Card } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
 import { formatDate } from '../lib/utils';
+import { WorkflowCanvas } from '../components/workflow-canvas/WorkflowCanvas';
 
 interface WorkflowStep {
   id: string;
@@ -88,12 +90,13 @@ export const Workflows: React.FC = () => {
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowItem | null>(null);
   const [selectedStep, setSelectedStep] = useState<WorkflowStep | null>(null);
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'visualizer' | 'executions'>('visualizer');
+  const [activeTab, setActiveTab] = useState<'canvas' | 'inspector' | 'executions'>('canvas');
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Simulation test state
   const [isSimulateModalOpen, setIsSimulateModalOpen] = useState(false);
-  const [simulatePhone, setSimulatePhone] = useState('+919876543210');
+  const [simulatePhone, setSimulatePhone] = useState('+918655021064');
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulateFeedback, setSimulateFeedback] = useState<string | null>(null);
 
@@ -151,13 +154,13 @@ export const Workflows: React.FC = () => {
           loadExecutions(first.id);
         }
       } else {
-        // Provide standard recruitment DAG structure if database has not yet seeded workflows
+        // Provide standard recruitment DAG structure with native WhatsApp interactive buttons
         const fallbackWorkflow: WorkflowItem = {
           id: 'wf-recruitment-01',
           _id: 'wf-recruitment-01',
-          name: 'End-to-End Recruitment & Survey Verification',
+          name: 'Interactive Recruitment Screening (YES / NO)',
           description:
-            'Autonomous candidate screening: WhatsApp outreach, AI assistance, real-time Google Sheets survey verification, and interview routing.',
+            'Autonomous candidate screening with native WhatsApp interactive quick-reply buttons (YES / NO), dynamic branching, and automatic tagging.',
           status: 'published',
           version: 1,
           trigger: {
@@ -167,75 +170,122 @@ export const Workflows: React.FC = () => {
           steps: [
             {
               id: 'step_1_trigger',
-              name: 'Inbound WhatsApp Keyword Trigger',
+              name: 'Campaign Outreach or Inbound Trigger',
               type: 'trigger',
-              config: { keywords: ['APPLY', 'HI'], channel: 'whatsapp' },
-              nextStepId: 'step_2_intro'
+              config: { keywords: ['APPLY', 'HI'], channel: 'whatsapp', _position: { x: 260, y: 30 } },
+              nextStepId: 'step_2_outreach'
             },
             {
-              id: 'step_2_intro',
-              name: 'Dispatch Job Details & Survey Form Link',
+              id: 'step_2_outreach',
+              name: 'WhatsApp Outreach (Interactive YES/NO Buttons)',
               type: 'send_message',
               config: {
-                template: 'recruitment_screening_intro',
-                params: { role: 'Full Stack Engineer', surveyLink: 'https://forms.gle/FlowDeskSurvey' }
+                messageTemplate: 'Hi {{firstName}}, we have an exciting opening for {{role}} at {{company}}! Are you interested? Tap an option below:',
+                buttons: [
+                  { id: 'btn_yes', title: 'YES' },
+                  { id: 'btn_no', title: 'NO' }
+                ],
+                _position: { x: 260, y: 190 }
               },
-              nextStepId: 'step_3_wait'
+              nextStepId: 'step_3_decision'
             },
             {
-              id: 'step_3_wait',
-              name: 'Wait for Candidate Submission',
-              type: 'wait_for_reply',
-              config: { timeoutHours: 24, fallbackAction: 'escalate_or_reminder' },
-              nextStepId: 'step_4_ai_qa'
-            },
-            {
-              id: 'step_4_ai_qa',
-              name: 'AI Conversational Assistant Q&A',
-              type: 'ai_conversation',
+              id: 'step_3_decision',
+              name: 'Evaluate Button Choice',
+              type: 'condition',
               config: {
-                model: 'gemini-1.5-flash',
-                grounding: 'knowledge_base',
-                allowedTools: ['get_job_details', 'verify_survey_completion', 'request_human_assistance'],
-                confidenceThreshold: 0.6
+                variablePath: 'lastReply',
+                _position: { x: 260, y: 380 }
               },
-              nextStepId: 'step_5_verify_sheets'
+              branches: [
+                { conditionType: 'equals', conditionValue: 'YES', targetStepId: 'step_4_yes_path' },
+                { conditionType: 'equals', conditionValue: 'NO', targetStepId: 'step_5_no_path' }
+              ]
             },
             {
-              id: 'step_5_verify_sheets',
-              name: 'Verify Candidate Submission in Google Sheets',
-              type: 'verify_data',
+              id: 'step_4_yes_path',
+              name: 'Send Application Form Link',
+              type: 'send_message',
               config: {
-                provider: 'google_sheets',
-                spreadsheetId: 'FLOWDESK_SURVEY_DRIVE_SHEET',
-                lookupField: 'phoneNumber',
-                matchColumn: 'Phone Number',
-                cacheTtlSeconds: 60
+                messageTemplate: 'Awesome {{firstName}}! Here is your application form: https://forms.gle/FlowDeskSurvey. Please complete it so we can schedule your interview!',
+                _position: { x: 80, y: 560 }
               },
-              onSuccessStepId: 'step_6_route_interview',
-              onFailureStepId: 'step_7_send_reminder'
+              nextStepId: 'step_6_tag_interested'
             },
             {
-              id: 'step_6_route_interview',
-              name: 'Tag survey_verified & Schedule Technical Round',
+              id: 'step_5_no_path',
+              name: 'Polite Acknowledgment & Archive',
+              type: 'send_message',
+              config: {
+                messageTemplate: 'Thank you for letting us know, {{firstName}}. We will keep your resume on file for future opportunities. Best of luck!',
+                _position: { x: 440, y: 560 }
+              },
+              nextStepId: 'step_7_tag_declined'
+            },
+            {
+              id: 'step_6_tag_interested',
+              name: 'Tag Contact: Interested',
               type: 'update_record',
               config: {
-                addTags: ['survey_verified', 'interview_scheduled'],
-                status: 'qualified'
-              }
+                operations: [
+                  { action: 'add_tag', value: 'interested' },
+                  { action: 'add_tag', value: 'survey_dispatched' }
+                ],
+                _position: { x: 80, y: 740 }
+              },
+              nextStepId: 'step_8_complete'
             },
             {
-              id: 'step_7_send_reminder',
-              name: 'Send Follow-up Survey Link & FAQ Assistance',
-              type: 'send_message',
+              id: 'step_7_tag_declined',
+              name: 'Tag Contact: Opt-Out',
+              type: 'update_record',
               config: {
-                template: 'survey_reminder_prompt'
-              }
+                operations: [
+                  { action: 'add_tag', value: 'opt_out' },
+                  { action: 'add_tag', value: 'not_interested' }
+                ],
+                _position: { x: 440, y: 740 }
+              },
+              nextStepId: 'step_8_complete'
+            },
+            {
+              id: 'step_8_complete',
+              name: 'Workflow Execution Finished',
+              type: 'terminate',
+              config: { outcome: 'completed', _position: { x: 260, y: 920 } }
             }
           ],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
+
+        try {
+          const createRes = await api.post<any>('/workflows', {
+            name: fallbackWorkflow.name,
+            description: fallbackWorkflow.description,
+            nodes: fallbackWorkflow.steps
+          });
+          if (createRes.success && createRes.data) {
+            const saved = createRes.data;
+            const normalized: WorkflowItem = {
+              id: saved.id || saved._id,
+              _id: saved.id || saved._id,
+              name: saved.name,
+              description: saved.description,
+              status: 'published',
+              version: saved.version || 1,
+              steps: saved.nodes || fallbackWorkflow.steps,
+              createdAt: saved.createdAt,
+              updatedAt: saved.updatedAt
+            };
+            setWorkflows([normalized]);
+            setSelectedWorkflow(normalized);
+            setSelectedStep(normalized.steps[0]);
+            return;
+          }
+        } catch {
+          // Fallback to local state if backend route error
+        }
 
         setWorkflows([fallbackWorkflow]);
         setSelectedWorkflow(fallbackWorkflow);
@@ -361,17 +411,58 @@ export const Workflows: React.FC = () => {
     }
   };
 
+  const handleSaveWorkflow = async (updatedNodes: any[]) => {
+    if (!selectedWorkflow) return;
+    setIsSaving(true);
+    try {
+      const wfId = selectedWorkflow.id || selectedWorkflow._id;
+      if (wfId && !wfId.startsWith('wf-')) {
+        await api.put(`/workflows/${wfId}`, { nodes: updatedNodes });
+      } else {
+        const createRes = await api.post<any>('/workflows', {
+          name: selectedWorkflow.name,
+          description: selectedWorkflow.description,
+          nodes: updatedNodes
+        });
+        if (createRes.success && createRes.data) {
+          await loadWorkflows();
+          return;
+        }
+      }
+      // Update local state
+      setSelectedWorkflow((prev) => (prev ? { ...prev, steps: updatedNodes } : null));
+    } catch (err: any) {
+      console.error('Failed to save workflow:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleSimulateExecution = async () => {
+    if (!selectedWorkflow) return;
     setIsSimulating(true);
     setSimulateFeedback(null);
     try {
-      // Simulate live verification node traversal
-      await new Promise((r) => setTimeout(r, 1200));
-      setSimulateFeedback(
-        `Simulation succeeded for ${simulatePhone}: Workflow completed all steps with 'verify_data' evaluating to SUCCESS against Google Sheets cache (sub-5ms lookup). Contact tagged 'survey_verified'.`
-      );
+      const wfId = selectedWorkflow.id || selectedWorkflow._id;
+      const res = await api.post<any>(`/workflows/${wfId}/trigger-test`, {
+        phone: simulatePhone,
+        variables: {
+          firstName: 'Aman',
+          role: 'Full Stack Engineer',
+          company: 'FlowDesk'
+        }
+      });
+
+      if (res.success) {
+        setSimulateFeedback(
+          `🚀 Workflow triggered successfully for ${simulatePhone}! Execution ID: ${res.data?.id || 'live'}. An interactive WhatsApp message with [YES] and [NO] quick-reply buttons has been dispatched. Check your phone now!`
+        );
+        loadExecutions(wfId);
+      } else {
+        setSimulateFeedback(`Trigger error: ${res.error || 'Server returned error.'}`);
+      }
     } catch (err: any) {
-      setSimulateFeedback('Simulation failed.');
+      setSimulateFeedback(`Connection error: ${err.message || 'Check backend status.'}`);
     } finally {
       setIsSimulating(false);
     }
@@ -451,24 +542,37 @@ export const Workflows: React.FC = () => {
           {/* Sub-Tabs */}
           <div className="flex items-center gap-1 bg-slate-200/70 p-1 rounded-lg border border-slate-300">
             <button
-              onClick={() => setActiveTab('visualizer')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                activeTab === 'visualizer'
+              onClick={() => setActiveTab('canvas')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'canvas'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              DAG Canvas ({selectedWorkflow?.steps?.length || 0} nodes)
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              Drag & Drop Canvas
+            </button>
+            <button
+              onClick={() => setActiveTab('inspector')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'inspector'
+                  ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-slate-500" />
+              Step Inspector ({selectedWorkflow?.steps?.length || 0})
             </button>
             <button
               onClick={() => setActiveTab('executions')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
                 activeTab === 'executions'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Live Execution Runs ({executions.length})
+              <Play className="w-3.5 h-3.5 text-slate-500" />
+              Live Runs ({executions.length})
             </button>
           </div>
         </div>
@@ -476,7 +580,20 @@ export const Workflows: React.FC = () => {
 
       {/* Main Workspace */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        {activeTab === 'visualizer' && (
+        {/* TAB 1: Visual Drag & Drop Canvas (React Flow) */}
+        {activeTab === 'canvas' && (
+          <div className="flex-1 p-6 overflow-hidden">
+            <WorkflowCanvas
+              workflow={selectedWorkflow}
+              onSave={handleSaveWorkflow}
+              onTriggerTest={() => setIsSimulateModalOpen(true)}
+              isSaving={isSaving}
+            />
+          </div>
+        )}
+
+        {/* TAB 2: Step Inspector (Classic DAG List) */}
+        {activeTab === 'inspector' && (
           <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
             {/* Visual DAG Flow Canvas */}
             <div className="flex-1 overflow-y-auto p-8 bg-slate-100/70 border-r border-slate-200 flex flex-col items-center">
@@ -773,36 +890,44 @@ export const Workflows: React.FC = () => {
         )}
       </div>
 
-      {/* Workflow Simulation Modal */}
+      {/* Workflow Real WhatsApp / Simulation Modal */}
       <Modal
         isOpen={isSimulateModalOpen}
         onClose={() => setIsSimulateModalOpen(false)}
-        title="Simulate Candidate Workflow Execution"
-        description="Run a test execution against the recruitment DAG pipeline to verify WhatsApp responses and Google Sheets verification."
+        title="Test Workflow on Real WhatsApp Mobile"
+        description="Dispatch this recruitment workflow directly to your WhatsApp mobile phone. When received, tap the [YES] or [NO] button on your screen to test real-time branching and automatic contact tagging."
       >
         <div className="space-y-4 mt-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Candidate Test Phone Number
+              Target WhatsApp Mobile Number (E.164 with Country Code)
             </label>
             <input
               type="text"
               value={simulatePhone}
               onChange={(e) => setSimulatePhone(e.target.value)}
+              placeholder="+918655021064"
               className="w-full text-xs font-mono bg-white border border-slate-300 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
 
-          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600 space-y-1">
-            <p className="font-semibold text-slate-800">Pipeline Traversal Checklist:</p>
-            <p>1. Inbound trigger evaluation on keyword 'HI'</p>
-            <p>2. WhatsApp job prompt template dispatch</p>
-            <p>3. AI agent contextual answer verification</p>
-            <p>4. Google Sheets lookup via VerificationService (Redis cache check)</p>
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600 space-y-1.5">
+            <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              How the Live Interactive Test Works:
+            </p>
+            <p>1. FlowDesk dispatches an interactive WhatsApp message with native <strong>[YES]</strong> and <strong>[NO]</strong> buttons to your phone.</p>
+            <p>2. Tap <strong>YES</strong> on your phone: Workflow branches to the positive route, sends the application link, and tags the contact <em>'interested'</em>.</p>
+            <p>3. Tap <strong>NO</strong> on your phone: Workflow branches to opt-out, sends a polite acknowledgment, and tags <em>'opt_out'</em>.</p>
+            <p>4. All messages appear live in the <strong>Team Inbox</strong> without page refresh.</p>
           </div>
 
           {simulateFeedback && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs leading-relaxed">
+            <div className={`p-3 rounded-lg text-xs leading-relaxed border ${
+              simulateFeedback.includes('🚀')
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900 font-medium'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}>
               {simulateFeedback}
             </div>
           )}
@@ -818,7 +943,7 @@ export const Workflows: React.FC = () => {
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               <Play className="w-3.5 h-3.5 mr-1.5" />
-              <span>Execute DAG Traversal</span>
+              <span>Dispatch to WhatsApp Mobile</span>
             </Button>
           </div>
         </div>

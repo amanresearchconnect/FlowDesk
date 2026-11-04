@@ -17,6 +17,7 @@ export interface ICampaign {
   contactListId: Types.ObjectId;
   workflowId?: Types.ObjectId;
   messageTemplate: string;
+  buttons?: Array<{ id: string; title: string }>;
   status: CampaignStatus;
   stats: ICampaignStats;
   throttleRatePerSecond: number;
@@ -59,6 +60,10 @@ const campaignSchema = new Schema<ICampaignDocument>(
       type: String,
       required: [true, 'Message template is required'],
       trim: true
+    },
+    buttons: {
+      type: [{ id: String, title: String }],
+      default: []
     },
     status: {
       type: String,

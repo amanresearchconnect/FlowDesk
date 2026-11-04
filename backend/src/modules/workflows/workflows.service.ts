@@ -4,7 +4,7 @@ import {
   WorkflowExecution,
   IWorkflowExecutionDocument
 } from '../../models/workflow-execution.model.js';
-import { CreateWorkflowInput } from './workflows.validator.js';
+import { CreateWorkflowInput, UpdateWorkflowInput } from './workflows.validator.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 
 export class WorkflowsService {
@@ -57,6 +57,82 @@ export class WorkflowsService {
       page,
       limit
     };
+  }
+
+  public static async updateWorkflow(
+    id: string,
+    input: UpdateWorkflowInput
+  ): Promise<ReturnType<IWorkflowDocument['toSafeObject']>> {
+    if (!mongoose.isValidObjectId(id)) {
+      throw new ValidationError('Invalid workflow ID format');
+    }
+
+    const workflow = await Workflow.findById(id);
+    if (!workflow) {
+      throw new NotFoundError('Workflow not found');
+    }
+
+    if (input.name) workflow.name = input.name;
+    if (input.description !== undefined) workflow.description = input.description;
+    if (input.nodes) {
+      workflow.nodes = input.nodes as any;
+      workflow.version += 1;
+    }
+    if (input.isPublished !== undefined) workflow.isPublished = input.isPublished;
+
+    await workflow.save();
+    return workflow.toSafeObject();
+  }
+
+  public static async deleteWorkflow(id: string): Promise<boolean> {
+    if (!mongoose.isValidObjectId(id)) {
+      throw new ValidationError('Invalid workflow ID format');
+    }
+
+    const result = await Workflow.findByIdAndDelete(id);
+    if (!result) {
+      throw new NotFoundError('Workflow not found');
+    }
+
+    return true;
+  }
+
+  public static async triggerWorkflowForContact(
+    workflowId: string,
+    phone: string,
+    variables: Record<string, any> = {}
+  ): Promise<ReturnType<IWorkflowExecutionDocument['toSafeObject']>> {
+    const { normalizePhoneNumber } = await import('../../utils/phone.js');
+    const { Contact } = await import('../../models/contact.model.js');
+    const { WorkflowEngine } = await import('./workflow.engine.js');
+
+    const phoneRes = normalizePhoneNumber(phone);
+    if (!phoneRes.isValid || !phoneRes.e164) {
+      throw new ValidationError(`Invalid recipient phone number: ${phone}`);
+    }
+
+    let contact = await Contact.findOne({ phone: phoneRes.e164 });
+    if (!contact) {
+      contact = await Contact.create({
+        phone: phoneRes.e164,
+        firstName: variables.firstName || 'Candidate',
+        lastName: variables.lastName || '',
+        tags: ['workflow_test']
+      });
+    }
+
+    const execution = await WorkflowEngine.startExecution(
+      workflowId,
+      contact._id.toString(),
+      undefined,
+      {
+        firstName: contact.firstName,
+        phone: contact.phone,
+        ...variables
+      }
+    );
+
+    return execution.toSafeObject();
   }
 
   public static async publishWorkflow(

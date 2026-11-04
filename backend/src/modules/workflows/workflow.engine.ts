@@ -13,6 +13,7 @@ import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { interpolateTemplate } from '../../utils/template.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { env } from '../../config/env.js';
 
 export class WorkflowEngine {
   public static async startExecution(
@@ -107,8 +108,15 @@ export class WorkflowEngine {
         };
         const messageBody = interpolateTemplate(template, mergeContext);
 
+        const buttons = Array.isArray(node.config.buttons) && node.config.buttons.length > 0
+          ? node.config.buttons
+          : undefined;
+
         const provider = getMessagingProvider();
-        const sendResult = await provider.sendMessage(contact.phone, { text: messageBody });
+        const sendResult = await provider.sendMessage(contact.phone, {
+          text: messageBody,
+          buttons
+        });
 
         let conversation = await Conversation.findOne({ contactId: contact._id });
         if (!conversation) {
@@ -128,6 +136,7 @@ export class WorkflowEngine {
           await conversation.save();
         }
 
+        const messageType = buttons && buttons.length > 0 ? 'interactive' : 'text';
         await Message.create({
           conversationId: conversation._id,
           contactId: contact._id,
@@ -135,10 +144,13 @@ export class WorkflowEngine {
           workflowExecutionId: execution._id,
           direction: 'outbound',
           senderType: 'system',
-          provider: 'mock',
+          provider: env.MESSAGING_PROVIDER === 'meta' ? 'meta' : 'mock',
           providerMessageId: sendResult.providerMessageId,
-          type: 'text',
-          content: { body: messageBody },
+          type: messageType,
+          content: {
+            body: messageBody,
+            buttons: buttons || []
+          },
           status: sendResult.status,
           sentAt: sendResult.timestamp
         });

@@ -21,6 +21,7 @@ export interface IMessage {
     templateName?: string;
     templateParams?: Record<string, any>;
     mediaUrl?: string;
+    buttons?: Array<{ id: string; title: string }>;
   };
   status: MessageStatus;
   errorMessage?: string;
@@ -91,7 +92,8 @@ const messageSchema = new Schema<IMessageDocument>(
       body: { type: String, default: '' },
       templateName: { type: String, default: null },
       templateParams: { type: Schema.Types.Mixed, default: {} },
-      mediaUrl: { type: String, default: null }
+      mediaUrl: { type: String, default: null },
+      buttons: { type: Schema.Types.Mixed, default: [] }
     },
     status: {
       type: String,

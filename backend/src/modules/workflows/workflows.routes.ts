@@ -3,7 +3,11 @@ import { WorkflowsController } from './workflows.controller.js';
 import { requireAuth } from '../../middlewares/auth.middleware.js';
 import { requireRole } from '../../middlewares/rbac.middleware.js';
 import { validateRequest } from '../../middlewares/validate.middleware.js';
-import { createWorkflowSchema } from './workflows.validator.js';
+import {
+  createWorkflowSchema,
+  updateWorkflowSchema,
+  triggerWorkflowTestSchema
+} from './workflows.validator.js';
 
 const router = Router();
 
@@ -13,6 +17,29 @@ router.post(
   requireRole(['admin', 'manager']),
   validateRequest({ body: createWorkflowSchema }),
   WorkflowsController.createWorkflow
+);
+
+router.put(
+  '/:id',
+  requireAuth,
+  requireRole(['admin', 'manager']),
+  validateRequest({ body: updateWorkflowSchema }),
+  WorkflowsController.updateWorkflow
+);
+
+router.delete(
+  '/:id',
+  requireAuth,
+  requireRole(['admin', 'manager']),
+  WorkflowsController.deleteWorkflow
+);
+
+router.post(
+  '/:id/trigger-test',
+  requireAuth,
+  requireRole(['admin', 'manager']),
+  validateRequest({ body: triggerWorkflowTestSchema }),
+  WorkflowsController.triggerTest
 );
 
 router.post(

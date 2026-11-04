@@ -1,8 +1,14 @@
+export interface IMessageButton {
+  id: string;
+  title: string;
+}
+
 export interface IMessageContent {
   text?: string;
   templateName?: string;
   templateParams?: Record<string, any>;
   mediaUrl?: string;
+  buttons?: IMessageButton[];
 }
 
 export interface ISendResult {
@@ -28,4 +34,3 @@ export interface IMessagingProvider {
   verifyWebhookSignature(headers: Record<string, string>, rawPayload: Buffer | string): boolean;
   parseWebhookPayload(payload: any): IParsedWebhookEvent[];
 }
-

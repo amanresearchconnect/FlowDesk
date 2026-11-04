@@ -4,7 +4,16 @@ export const createCampaignSchema = z.object({
   name: z.string().trim().min(2, 'Campaign name must be at least 2 characters').max(150),
   description: z.string().trim().max(500).optional(),
   contactListId: z.string().min(1, 'Contact list ID is required'),
+  workflowId: z.string().optional().nullable(),
   messageTemplate: z.string().trim().min(1, 'Message template cannot be empty'),
+  buttons: z
+    .array(
+      z.object({
+        id: z.string(),
+        title: z.string().max(20, 'Button title max 20 chars')
+      })
+    )
+    .optional(),
   throttleRatePerSecond: z.number().int().positive().max(100).optional()
 });
 

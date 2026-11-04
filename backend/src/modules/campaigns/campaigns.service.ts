@@ -8,12 +8,15 @@ import { getMessagingProvider } from '../../providers/messaging/messaging.factor
 import { interpolateTemplate } from '../../utils/template.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { env } from '../../config/env.js';
 
 export interface CreateCampaignInput {
   name: string;
   description?: string;
   contactListId: string;
+  workflowId?: string | null;
   messageTemplate: string;
+  buttons?: Array<{ id: string; title: string }>;
   throttleRatePerSecond?: number;
 }
 
@@ -35,7 +38,11 @@ export class CampaignsService {
       name: input.name,
       description: input.description || '',
       contactListId: new Types.ObjectId(input.contactListId),
+      workflowId: input.workflowId && mongoose.isValidObjectId(input.workflowId)
+        ? new Types.ObjectId(input.workflowId)
+        : null,
       messageTemplate: input.messageTemplate,
+      buttons: input.buttons || [],
       status: 'draft',
       throttleRatePerSecond: input.throttleRatePerSecond || 20,
       createdById: new Types.ObjectId(createdById),
@@ -49,7 +56,12 @@ export class CampaignsService {
       }
     });
 
-    logger.info('Campaign created in draft', { campaignId: campaign._id.toString(), name: campaign.name });
+    logger.info('Campaign created in draft', {
+      campaignId: campaign._id.toString(),
+      name: campaign.name,
+      workflowId: campaign.workflowId?.toString(),
+      hasButtons: (campaign.buttons?.length || 0) > 0
+    });
     return campaign.toSafeObject();
   }
 
@@ -93,61 +105,96 @@ export class CampaignsService {
     let dispatchedCount = 0;
     let failedCount = 0;
 
-    // Dispatch messages to contacts
-    for (const contact of contacts) {
-      const personalizedBody = interpolateTemplate(campaign.messageTemplate, contact.toObject());
-
-      try {
-        const sendResult = await provider.sendMessage(contact.phone, {
-          text: personalizedBody
-        });
-
-        let conversation = await Conversation.findOne({ contactId: contact._id });
-        if (!conversation) {
-          conversation = await Conversation.create({
-            contactId: contact._id,
-            channel: 'whatsapp',
-            status: 'bot',
-            activeCampaignId: campaign._id,
-            lastMessageAt: new Date(),
-            lastMessagePreview: personalizedBody.substring(0, 100),
-            unreadCount: 0
+    // Dispatch messages or launch automated workflow
+    if (campaign.workflowId) {
+      const { WorkflowEngine } = await import('../workflows/workflow.engine.js');
+      for (const contact of contacts) {
+        try {
+          await WorkflowEngine.startExecution(
+            campaign.workflowId.toString(),
+            contact._id.toString(),
+            campaign._id.toString(),
+            contact.toObject()
+          );
+          dispatchedCount++;
+        } catch (err: any) {
+          failedCount++;
+          logger.error('Failed to start workflow execution for contact', {
+            contactId: contact._id.toString(),
+            phone: contact.phone,
+            error: err.message
           });
-        } else {
-          conversation.lastMessageAt = new Date();
-          conversation.lastMessagePreview = personalizedBody.substring(0, 100);
-          conversation.activeCampaignId = campaign._id;
-          await conversation.save();
         }
+      }
+    } else {
+      const buttons = campaign.buttons && campaign.buttons.length > 0 ? campaign.buttons : undefined;
+      for (const contact of contacts) {
+        const personalizedBody = interpolateTemplate(campaign.messageTemplate, contact.toObject());
 
-        await Message.create({
-          conversationId: conversation._id,
-          contactId: contact._id,
-          campaignId: campaign._id,
-          direction: 'outbound',
-          senderType: 'system',
-          provider: 'meta',
-          providerMessageId: sendResult.providerMessageId,
-          type: 'text',
-          content: { body: personalizedBody },
-          status: sendResult.status,
-          sentAt: sendResult.timestamp
-        });
+        try {
+          const sendResult = await provider.sendMessage(contact.phone, {
+            text: personalizedBody,
+            buttons
+          });
 
-        dispatchedCount++;
-      } catch (err: any) {
-        failedCount++;
-        logger.error('Failed to dispatch campaign message', {
-          contactId: contact._id.toString(),
-          phone: contact.phone,
-          error: err.message
-        });
+          let conversation = await Conversation.findOne({ contactId: contact._id });
+          if (!conversation) {
+            conversation = await Conversation.create({
+              contactId: contact._id,
+              channel: 'whatsapp',
+              status: 'bot',
+              activeCampaignId: campaign._id,
+              lastMessageAt: new Date(),
+              lastMessagePreview: personalizedBody.substring(0, 100),
+              unreadCount: 0
+            });
+          } else {
+            conversation.lastMessageAt = new Date();
+            conversation.lastMessagePreview = personalizedBody.substring(0, 100);
+            conversation.activeCampaignId = campaign._id;
+            await conversation.save();
+          }
+
+          const messageType = buttons && buttons.length > 0 ? 'interactive' : 'text';
+          await Message.create({
+            conversationId: conversation._id,
+            contactId: contact._id,
+            campaignId: campaign._id,
+            direction: 'outbound',
+            senderType: 'system',
+            provider: env.MESSAGING_PROVIDER === 'meta' ? 'meta' : 'mock',
+            providerMessageId: sendResult.providerMessageId,
+            type: messageType,
+            content: {
+              body: personalizedBody,
+              buttons: buttons || []
+            },
+            status: sendResult.status,
+            sentAt: sendResult.timestamp
+          });
+
+          dispatchedCount++;
+        } catch (err: any) {
+          failedCount++;
+          logger.error('Failed to dispatch campaign message', {
+            contactId: contact._id.toString(),
+            phone: contact.phone,
+            error: err.message
+          });
+        }
       }
     }
 
-    campaign.stats.dispatched = dispatchedCount;
-    campaign.stats.failed = failedCount;
-    await campaign.save();
+    await Campaign.updateOne(
+      { _id: campaign._id },
+      {
+        $set: {
+          status: 'active',
+          'stats.dispatched': dispatchedCount,
+          'stats.failed': failedCount
+        }
+      }
+    );
 
     logger.info('Campaign launched successfully', {
       campaignId: campaign._id.toString(),
@@ -205,6 +252,7 @@ export class CampaignsService {
     const [campaigns, total] = await Promise.all([
       Campaign.find()
         .populate('contactListId', 'name totalCount validCount')
+        .populate('workflowId', 'name isPublished')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -226,7 +274,9 @@ export class CampaignsService {
       throw new ValidationError('Invalid campaign ID format');
     }
 
-    const campaign = await Campaign.findById(campaignId).populate('contactListId', 'name totalCount validCount');
+    const campaign = await Campaign.findById(campaignId)
+      .populate('contactListId', 'name totalCount validCount')
+      .populate('workflowId', 'name isPublished');
     if (!campaign) {
       throw new NotFoundError('Campaign not found');
     }

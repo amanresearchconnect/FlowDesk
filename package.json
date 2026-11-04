@@ -30,6 +30,7 @@
   "author": "",
   "license": "UNLICENSED",
   "devDependencies": {
-    "concurrently": "^10.0.6"
+    "concurrently": "^10.0.6",
+    "localtunnel": "^2.0.2"
   }
 }

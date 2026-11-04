@@ -66,6 +66,59 @@ export class WorkflowsController {
     }
   }
 
+  public static async updateWorkflow(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const workflow = await WorkflowsService.updateWorkflow(req.params.id, req.body);
+      res.status(200).json({
+        success: true,
+        data: workflow
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async deleteWorkflow(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      await WorkflowsService.deleteWorkflow(req.params.id);
+      res.status(200).json({
+        success: true,
+        message: 'Workflow deleted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async triggerTest(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { phone, variables } = req.body;
+      const execution = await WorkflowsService.triggerWorkflowForContact(
+        req.params.id,
+        phone,
+        variables || {}
+      );
+      res.status(200).json({
+        success: true,
+        data: execution
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public static async publishWorkflow(
     req: Request,
     res: Response,

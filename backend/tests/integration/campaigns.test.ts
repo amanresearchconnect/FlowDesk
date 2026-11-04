@@ -119,7 +119,7 @@ describe('Campaigns & Mock WhatsApp Messaging Integration Tests', () => {
     );
 
     // 4. Wait for simulated delivery and read receipts
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
 
     // 5. Check live campaign stats
     const statsRes = await request(app)

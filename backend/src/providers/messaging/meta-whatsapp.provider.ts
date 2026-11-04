@@ -48,6 +48,29 @@ export class MetaWhatsAppProvider implements IMessagingProvider {
       if (content.templateParams?.components) {
         payload.template.components = content.templateParams.components;
       }
+    } else if (content.buttons && content.buttons.length > 0) {
+      // Interactive Button Message (Native quick-reply buttons, e.g. YES / NO)
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanRecipient,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: {
+            text: content.text || 'Please select an option:'
+          },
+          action: {
+            buttons: content.buttons.slice(0, 3).map((btn, idx) => ({
+              type: 'reply',
+              reply: {
+                id: (btn.id || `btn_${idx + 1}`).slice(0, 256),
+                title: btn.title.slice(0, 20)
+              }
+            }))
+          }
+        }
+      };
     } else {
       // Freeform text message (Permitted within 24-hour service window after candidate replies)
       payload = {
