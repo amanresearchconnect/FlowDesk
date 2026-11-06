@@ -162,5 +162,44 @@ export class ConversationsController {
       next(error);
     }
   }
+
+  public static async getActiveExecution(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await ConversationsService.getActiveExecution(req.params.id);
+
+      res.status(200).json({
+        success: true,
+        data
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async startWorkflow(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { workflowId, startStepId, variables } = req.body;
+      const data = await ConversationsService.startOrRestartWorkflow(
+        req.params.id,
+        workflowId,
+        startStepId,
+        variables
+      );
+      res.status(200).json({
+        success: true,
+        data
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

@@ -3,6 +3,8 @@ import { env } from '../../config/env.js';
 import { Conversation, IConversationDocument, ConversationStatus } from '../../models/conversation.model.js';
 import { Contact } from '../../models/contact.model.js';
 import { Message, IMessageDocument } from '../../models/message.model.js';
+import { WorkflowExecution } from '../../models/workflow-execution.model.js';
+import { Workflow } from '../../models/workflow.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
 import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
@@ -272,6 +274,75 @@ export class ConversationsService {
 
     logger.info('Conversation closed', { conversationId });
     return conversation.toSafeObject();
+  }
+
+  public static async getActiveExecution(conversationId: string): Promise<any> {
+    if (!mongoose.isValidObjectId(conversationId)) {
+      throw new ValidationError('Invalid conversation ID format');
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundError('Conversation not found');
+    }
+
+    // Find the latest execution for this contact
+    const execution = await WorkflowExecution.findOne({
+      contactId: conversation.contactId
+    })
+      .sort({ updatedAt: -1 })
+      .populate('workflowId');
+
+    if (!execution) {
+      return null;
+    }
+
+    const workflow = execution.workflowId as any;
+    return {
+      execution: execution.toSafeObject(),
+      workflow: workflow ? (workflow.toSafeObject ? workflow.toSafeObject() : workflow) : null
+    };
+  }
+
+  public static async startOrRestartWorkflow(
+    conversationId: string,
+    workflowId: string,
+    startStepId?: string,
+    initialVariables: Record<string, any> = {}
+  ): Promise<any> {
+    if (!mongoose.isValidObjectId(conversationId) || !mongoose.isValidObjectId(workflowId)) {
+      throw new ValidationError('Invalid conversation or workflow ID');
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      throw new NotFoundError('Conversation not found');
+    }
+
+    const contact = await Contact.findById(conversation.contactId);
+    if (!contact) {
+      throw new NotFoundError('Contact not found');
+    }
+
+    const { WorkflowEngine } = await import('../workflows/workflow.engine.js');
+    const execution = await WorkflowEngine.startExecution(
+      workflowId,
+      contact._id.toString(),
+      conversation.activeCampaignId?.toString(),
+      {
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        phone: contact.phone,
+        ...initialVariables
+      },
+      startStepId
+    );
+
+    const workflow = await Workflow.findById(workflowId);
+    return {
+      execution: execution.toSafeObject(),
+      workflow: workflow ? workflow.toSafeObject() : null
+    };
   }
 }
 

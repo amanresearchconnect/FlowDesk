@@ -16,7 +16,8 @@ import {
   Plus,
   Send,
   MessageSquare,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -85,6 +86,194 @@ interface ExecutionItem {
   updatedAt: string;
 }
 
+const STARTER_TEMPLATES = {
+  recruitment_yes_no: {
+    label: 'Interactive YES / NO Screening (Recommended)',
+    desc: 'WhatsApp outreach with native quick-reply buttons (YES / NO), branch routing, and automatic contact tagging.',
+    icon: MessageSquare,
+    nodes: [
+      {
+        id: 'step_1_trigger',
+        name: 'Trigger: Campaign or Inbound Keyword',
+        type: 'trigger',
+        config: { keywords: ['APPLY', 'HI'], channel: 'whatsapp', _position: { x: 260, y: 30 } },
+        nextStepId: 'step_2_outreach'
+      },
+      {
+        id: 'step_2_outreach',
+        name: 'WhatsApp Outreach (Native YES/NO Buttons)',
+        type: 'send_message',
+        config: {
+          messageTemplate: 'Hi {{firstName}}, we have an exciting opening for {{role}} at {{company}}! Are you interested? Tap an option below:',
+          buttons: [
+            { id: 'btn_yes', title: 'YES' },
+            { id: 'btn_no', title: 'NO' }
+          ],
+          _position: { x: 260, y: 190 }
+        },
+        nextStepId: 'step_3_decision'
+      },
+      {
+        id: 'step_3_decision',
+        name: 'Evaluate Button Choice',
+        type: 'condition',
+        config: {
+          variablePath: 'lastReply',
+          _position: { x: 260, y: 380 }
+        },
+        branches: [
+          { conditionType: 'equals', conditionValue: 'YES', targetStepId: 'step_4_yes_path' },
+          { conditionType: 'equals', conditionValue: 'NO', targetStepId: 'step_5_no_path' }
+        ]
+      },
+      {
+        id: 'step_4_yes_path',
+        name: 'Send Application Form Link',
+        type: 'send_message',
+        config: {
+          messageTemplate: 'Awesome {{firstName}}! Here is your application form: https://forms.gle/FlowDeskSurvey. Please complete it so we can schedule your interview!',
+          _position: { x: 80, y: 560 }
+        },
+        nextStepId: 'step_6_tag_interested'
+      },
+      {
+        id: 'step_5_no_path',
+        name: 'Polite Acknowledgment & Archive',
+        type: 'send_message',
+        config: {
+          messageTemplate: 'Thank you for letting us know, {{firstName}}. We will keep your resume on file for future opportunities. Best of luck!',
+          _position: { x: 440, y: 560 }
+        },
+        nextStepId: 'step_7_tag_declined'
+      },
+      {
+        id: 'step_6_tag_interested',
+        name: 'Tag Contact: Interested',
+        type: 'update_record',
+        config: {
+          operations: [
+            { action: 'add_tag', value: 'interested' },
+            { action: 'add_tag', value: 'survey_dispatched' }
+          ],
+          _position: { x: 80, y: 740 }
+        },
+        nextStepId: 'step_8_complete'
+      },
+      {
+        id: 'step_7_tag_declined',
+        name: 'Tag Contact: Opt-Out',
+        type: 'update_record',
+        config: {
+          operations: [
+            { action: 'add_tag', value: 'opt_out' },
+            { action: 'add_tag', value: 'not_interested' }
+          ],
+          _position: { x: 440, y: 740 }
+        },
+        nextStepId: 'step_8_complete'
+      },
+      {
+        id: 'step_8_complete',
+        name: 'Screening Complete',
+        type: 'terminate',
+        config: { reason: 'Screening flow completed', _position: { x: 260, y: 920 } }
+      }
+    ]
+  },
+  survey_excel_sync: {
+    label: 'Two-Way Survey Verification & Excel Sync',
+    desc: 'Verify candidate submissions against Google Sheets or Excel Online and auto-tag upon confirmation.',
+    icon: FileSpreadsheet,
+    nodes: [
+      {
+        id: 'step_1_trigger',
+        name: 'Trigger: Outreach Dispatched',
+        type: 'trigger',
+        config: { channel: 'whatsapp', _position: { x: 260, y: 30 } },
+        nextStepId: 'step_2_send_survey'
+      },
+      {
+        id: 'step_2_send_survey',
+        name: 'Send Survey Link with Confirmation Button',
+        type: 'send_message',
+        config: {
+          messageTemplate: 'Hi {{firstName}}, please complete the technical screening survey here: https://forms.gle/FlowDeskSurvey. Once completed, tap below:',
+          buttons: [
+            { id: 'btn_done', title: 'I HAVE SUBMITTED' }
+          ],
+          _position: { x: 260, y: 190 }
+        },
+        nextStepId: 'step_3_verify_sheet'
+      },
+      {
+        id: 'step_3_verify_sheet',
+        name: 'Verify Candidate Submission in Excel/Sheets',
+        type: 'verify_data',
+        config: {
+          provider: 'google_sheets',
+          sheetName: 'Responses',
+          matchField: 'phone',
+          _position: { x: 260, y: 380 }
+        },
+        nextStepId: 'step_4_tag_verified'
+      },
+      {
+        id: 'step_4_tag_verified',
+        name: 'Tag Contact: Survey Verified',
+        type: 'update_record',
+        config: {
+          operations: [
+            { action: 'add_tag', value: 'survey_verified' },
+            { action: 'add_tag', value: 'ready_for_interview' }
+          ],
+          _position: { x: 260, y: 560 }
+        },
+        nextStepId: 'step_5_notify'
+      },
+      {
+        id: 'step_5_notify',
+        name: 'Send Confirmation Message',
+        type: 'send_message',
+        config: {
+          messageTemplate: 'Thank you {{firstName}}! Your submission has been verified in our system. Our recruiter will reach out shortly.',
+          _position: { x: 260, y: 740 }
+        },
+        nextStepId: 'step_6_terminate'
+      },
+      {
+        id: 'step_6_terminate',
+        name: 'Workflow Complete',
+        type: 'terminate',
+        config: { reason: 'Survey verified and logged', _position: { x: 260, y: 920 } }
+      }
+    ]
+  },
+  blank: {
+    label: 'Blank Canvas (Custom Sequence)',
+    desc: 'Start with a minimal trigger and message node to build your own custom flow from scratch.',
+    icon: Sparkles,
+    nodes: [
+      {
+        id: 'step_1_trigger',
+        name: 'Workflow Trigger',
+        type: 'trigger',
+        config: { channel: 'whatsapp', _position: { x: 260, y: 40 } },
+        nextStepId: 'step_2_message'
+      },
+      {
+        id: 'step_2_message',
+        name: 'Send WhatsApp Message',
+        type: 'send_message',
+        config: {
+          messageTemplate: 'Hello {{firstName}}, welcome to FlowDesk! How can we assist you today?',
+          _position: { x: 260, y: 220 }
+        },
+        nextStepId: null
+      }
+    ]
+  }
+};
+
 export const Workflows: React.FC = () => {
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowItem | null>(null);
@@ -100,11 +289,18 @@ export const Workflows: React.FC = () => {
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulateFeedback, setSimulateFeedback] = useState<string | null>(null);
 
+  // Workflow creation state
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newWorkflowName, setNewWorkflowName] = useState('');
+  const [newWorkflowDesc, setNewWorkflowDesc] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState<keyof typeof STARTER_TEMPLATES>('recruitment_yes_no');
+  const [isCreatingWorkflow, setIsCreatingWorkflow] = useState(false);
+
   useEffect(() => {
     loadWorkflows();
   }, []);
 
-  const loadWorkflows = async () => {
+  const loadWorkflows = async (preferredId?: string) => {
     setIsLoading(true);
     try {
       const res = await api.get<any[]>('/workflows');
@@ -145,13 +341,15 @@ export const Workflows: React.FC = () => {
         });
 
         setWorkflows(normalizedWorkflows);
-        const first = normalizedWorkflows[0];
-        setSelectedWorkflow(first);
-        if (first.steps && first.steps.length > 0) {
-          setSelectedStep(first.steps[0]);
+        const target = preferredId
+          ? normalizedWorkflows.find((w) => w.id === preferredId || w._id === preferredId) || normalizedWorkflows[0]
+          : normalizedWorkflows[0];
+        setSelectedWorkflow(target);
+        if (target.steps && target.steps.length > 0) {
+          setSelectedStep(target.steps[0]);
         }
-        if (first.id) {
-          loadExecutions(first.id);
+        if (target.id) {
+          loadExecutions(target.id);
         }
       } else {
         // Provide standard recruitment DAG structure with native WhatsApp interactive buttons
@@ -167,132 +365,16 @@ export const Workflows: React.FC = () => {
             type: 'inbound_message',
             keywords: ['HI', 'APPLY', 'JOB', 'INTERVIEW']
           },
-          steps: [
-            {
-              id: 'step_1_trigger',
-              name: 'Campaign Outreach or Inbound Trigger',
-              type: 'trigger',
-              config: { keywords: ['APPLY', 'HI'], channel: 'whatsapp', _position: { x: 260, y: 30 } },
-              nextStepId: 'step_2_outreach'
-            },
-            {
-              id: 'step_2_outreach',
-              name: 'WhatsApp Outreach (Interactive YES/NO Buttons)',
-              type: 'send_message',
-              config: {
-                messageTemplate: 'Hi {{firstName}}, we have an exciting opening for {{role}} at {{company}}! Are you interested? Tap an option below:',
-                buttons: [
-                  { id: 'btn_yes', title: 'YES' },
-                  { id: 'btn_no', title: 'NO' }
-                ],
-                _position: { x: 260, y: 190 }
-              },
-              nextStepId: 'step_3_decision'
-            },
-            {
-              id: 'step_3_decision',
-              name: 'Evaluate Button Choice',
-              type: 'condition',
-              config: {
-                variablePath: 'lastReply',
-                _position: { x: 260, y: 380 }
-              },
-              branches: [
-                { conditionType: 'equals', conditionValue: 'YES', targetStepId: 'step_4_yes_path' },
-                { conditionType: 'equals', conditionValue: 'NO', targetStepId: 'step_5_no_path' }
-              ]
-            },
-            {
-              id: 'step_4_yes_path',
-              name: 'Send Application Form Link',
-              type: 'send_message',
-              config: {
-                messageTemplate: 'Awesome {{firstName}}! Here is your application form: https://forms.gle/FlowDeskSurvey. Please complete it so we can schedule your interview!',
-                _position: { x: 80, y: 560 }
-              },
-              nextStepId: 'step_6_tag_interested'
-            },
-            {
-              id: 'step_5_no_path',
-              name: 'Polite Acknowledgment & Archive',
-              type: 'send_message',
-              config: {
-                messageTemplate: 'Thank you for letting us know, {{firstName}}. We will keep your resume on file for future opportunities. Best of luck!',
-                _position: { x: 440, y: 560 }
-              },
-              nextStepId: 'step_7_tag_declined'
-            },
-            {
-              id: 'step_6_tag_interested',
-              name: 'Tag Contact: Interested',
-              type: 'update_record',
-              config: {
-                operations: [
-                  { action: 'add_tag', value: 'interested' },
-                  { action: 'add_tag', value: 'survey_dispatched' }
-                ],
-                _position: { x: 80, y: 740 }
-              },
-              nextStepId: 'step_8_complete'
-            },
-            {
-              id: 'step_7_tag_declined',
-              name: 'Tag Contact: Opt-Out',
-              type: 'update_record',
-              config: {
-                operations: [
-                  { action: 'add_tag', value: 'opt_out' },
-                  { action: 'add_tag', value: 'not_interested' }
-                ],
-                _position: { x: 440, y: 740 }
-              },
-              nextStepId: 'step_8_complete'
-            },
-            {
-              id: 'step_8_complete',
-              name: 'Workflow Execution Finished',
-              type: 'terminate',
-              config: { outcome: 'completed', _position: { x: 260, y: 920 } }
-            }
-          ],
+          steps: STARTER_TEMPLATES.recruitment_yes_no.nodes,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
 
-        try {
-          const createRes = await api.post<any>('/workflows', {
-            name: fallbackWorkflow.name,
-            description: fallbackWorkflow.description,
-            nodes: fallbackWorkflow.steps
-          });
-          if (createRes.success && createRes.data) {
-            const saved = createRes.data;
-            const normalized: WorkflowItem = {
-              id: saved.id || saved._id,
-              _id: saved.id || saved._id,
-              name: saved.name,
-              description: saved.description,
-              status: 'published',
-              version: saved.version || 1,
-              steps: saved.nodes || fallbackWorkflow.steps,
-              createdAt: saved.createdAt,
-              updatedAt: saved.updatedAt
-            };
-            setWorkflows([normalized]);
-            setSelectedWorkflow(normalized);
-            setSelectedStep(normalized.steps[0]);
-            return;
-          }
-        } catch {
-          // Fallback to local state if backend route error
-        }
-
         setWorkflows([fallbackWorkflow]);
         setSelectedWorkflow(fallbackWorkflow);
         setSelectedStep(fallbackWorkflow.steps[0]);
-        loadExecutions(fallbackWorkflow.id);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to load workflows:', err);
     } finally {
       setIsLoading(false);
@@ -300,87 +382,13 @@ export const Workflows: React.FC = () => {
   };
 
   const loadExecutions = async (workflowId?: string) => {
-    if (!workflowId || workflowId === 'undefined' || typeof workflowId !== 'string') {
-      return;
-    }
-
-    const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(workflowId);
-    if (!isValidObjectId) {
-      setExecutions([
-        {
-          _id: 'exec-101',
-          workflowId,
-          contactId: { phoneNumber: '+919876543210', firstName: 'Priya' },
-          status: 'completed',
-          currentStepId: 'step_6_route_interview',
-          variables: { surveyVerified: true, score: 92 },
-          createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-          updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString()
-        },
-        {
-          _id: 'exec-102',
-          workflowId,
-          contactId: { phoneNumber: '+919876543211', firstName: 'Rahul' },
-          status: 'in_progress',
-          currentStepId: 'step_4_ai_qa',
-          variables: { queryCount: 2 },
-          createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-          updatedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString()
-        },
-        {
-          _id: 'exec-103',
-          workflowId,
-          contactId: { phoneNumber: '+12025550199', firstName: 'David' },
-          status: 'completed',
-          currentStepId: 'step_6_route_interview',
-          variables: { surveyVerified: true, score: 85 },
-          createdAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          updatedAt: new Date(Date.now() - 1.8 * 3600 * 1000).toISOString()
-        }
-      ]);
-      return;
-    }
-
+    if (!workflowId) return;
     try {
-      const res = await api.get<ExecutionItem[]>(
-        `/workflows/${workflowId}/executions`
-      );
-      if (res.success && res.data && res.data.length > 0) {
+      const res = await api.get<any[]>(`/workflows/${workflowId}/executions`);
+      if (res.success && Array.isArray(res.data)) {
         setExecutions(res.data);
       } else {
-        // Fallback sample runs for immediate demo inspectability
-        setExecutions([
-          {
-            _id: 'exec-101',
-            workflowId,
-            contactId: { phoneNumber: '+919876543210', firstName: 'Priya' },
-            status: 'completed',
-            currentStepId: 'step_6_route_interview',
-            variables: { surveyVerified: true, score: 92 },
-            createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-            updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString()
-          },
-          {
-            _id: 'exec-102',
-            workflowId,
-            contactId: { phoneNumber: '+919876543211', firstName: 'Rahul' },
-            status: 'in_progress',
-            currentStepId: 'step_4_ai_qa',
-            variables: { queryCount: 2 },
-            createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-            updatedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString()
-          },
-          {
-            _id: 'exec-103',
-            workflowId,
-            contactId: { phoneNumber: '+12025550199', firstName: 'David' },
-            status: 'completed',
-            currentStepId: 'step_6_route_interview',
-            variables: { surveyVerified: true, score: 85 },
-            createdAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-            updatedAt: new Date(Date.now() - 1.8 * 3600 * 1000).toISOString()
-          }
-        ]);
+        setExecutions([]);
       }
     } catch (err) {
       console.error('Failed to load executions:', err);
@@ -411,28 +419,89 @@ export const Workflows: React.FC = () => {
     }
   };
 
+  const handleCreateWorkflow = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWorkflowName.trim()) return;
+
+    setIsCreatingWorkflow(true);
+    try {
+      const selectedStarter = STARTER_TEMPLATES[selectedTemplate];
+      const res = await api.post<any>('/workflows', {
+        name: newWorkflowName.trim(),
+        description: newWorkflowDesc.trim() || undefined,
+        nodes: selectedStarter.nodes,
+        isPublished: true
+      });
+
+      if (res.success && res.data) {
+        setIsCreateModalOpen(false);
+        setNewWorkflowName('');
+        setNewWorkflowDesc('');
+        const newId = res.data.id || res.data._id;
+        await loadWorkflows(newId);
+        setActiveTab('canvas');
+      } else {
+        alert(`Failed to create workflow: ${res.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      alert(`Failed to create workflow: ${err.message || 'Server error'}`);
+    } finally {
+      setIsCreatingWorkflow(false);
+    }
+  };
+
+  const handleDeleteWorkflow = async () => {
+    if (!selectedWorkflow) return;
+    const wfId = selectedWorkflow.id || selectedWorkflow._id;
+    if (!wfId || wfId.startsWith('wf-')) {
+      alert('Cannot delete the built-in system default template.');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to delete "${selectedWorkflow.name}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await api.delete(`/workflows/${wfId}`);
+      await loadWorkflows();
+    } catch (err: any) {
+      alert(`Failed to delete workflow: ${err.message || 'Error occurred'}`);
+    }
+  };
+
   const handleSaveWorkflow = async (updatedNodes: any[]) => {
     if (!selectedWorkflow) return;
     setIsSaving(true);
     try {
       const wfId = selectedWorkflow.id || selectedWorkflow._id;
       if (wfId && !wfId.startsWith('wf-')) {
-        await api.put(`/workflows/${wfId}`, { nodes: updatedNodes });
+        const updateRes = await api.put(`/workflows/${wfId}`, { nodes: updatedNodes });
+        if (!updateRes.success) {
+          throw new Error(updateRes.error || 'Failed to update workflow');
+        }
+        await loadWorkflows(wfId);
       } else {
         const createRes = await api.post<any>('/workflows', {
-          name: selectedWorkflow.name,
+          name: selectedWorkflow.name.replace(' (Built-in)', ''),
           description: selectedWorkflow.description,
-          nodes: updatedNodes
+          nodes: updatedNodes,
+          isPublished: true
         });
         if (createRes.success && createRes.data) {
-          await loadWorkflows();
+          const newId = createRes.data.id || createRes.data._id;
+          await loadWorkflows(newId);
           return;
+        } else {
+          throw new Error(createRes.error || 'Failed to create workflow');
         }
       }
       // Update local state
       setSelectedWorkflow((prev) => (prev ? { ...prev, steps: updatedNodes } : null));
     } catch (err: any) {
       console.error('Failed to save workflow:', err);
+      alert(`Failed to save workflow: ${err.message || 'Validation or network error'}`);
+      throw err;
     } finally {
       setIsSaving(false);
     }
@@ -489,23 +558,32 @@ export const Workflows: React.FC = () => {
 
           <div className="flex items-center gap-3">
             <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Workflow</span>
+            </Button>
+            <Button
               variant="outline"
               size="sm"
-              onClick={loadWorkflows}
-              className="gap-2"
+              onClick={() => setIsSimulateModalOpen(true)}
+              className="gap-2 border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+            >
+              <Send className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Test Live on Mobile</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadWorkflows()}
+              className="gap-2 text-slate-600 hover:text-slate-900"
               title="Reload workflow definitions"
             >
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
               <span>Refresh</span>
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setIsSimulateModalOpen(true)}
-              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-            >
-              <Play className="w-3.5 h-3.5" />
-              <span>Simulate Candidate Execution</span>
             </Button>
           </div>
         </div>
@@ -526,7 +604,7 @@ export const Workflows: React.FC = () => {
                   loadExecutions(wf.id || wf._id);
                 }
               }}
-              className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500 max-w-sm truncate"
             >
               {workflows.map((wf) => (
                 <option key={wf.id || wf._id} value={wf.id || wf._id}>
@@ -537,6 +615,17 @@ export const Workflows: React.FC = () => {
             <Badge variant="emerald" className="ml-1 uppercase text-[10px]">
               {selectedWorkflow?.status || 'published'}
             </Badge>
+            {selectedWorkflow && !selectedWorkflow.id?.startsWith('wf-') && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleDeleteWorkflow}
+                className="text-slate-400 hover:text-rose-600 p-1.5 ml-0.5 rounded-lg hover:bg-rose-50"
+                title="Delete this workflow"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+              </Button>
+            )}
           </div>
 
           {/* Sub-Tabs */}
@@ -582,7 +671,7 @@ export const Workflows: React.FC = () => {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* TAB 1: Visual Drag & Drop Canvas (React Flow) */}
         {activeTab === 'canvas' && (
-          <div className="flex-1 p-6 overflow-hidden">
+          <div className="flex-1 p-6 overflow-hidden flex flex-col h-full min-h-0">
             <WorkflowCanvas
               workflow={selectedWorkflow}
               onSave={handleSaveWorkflow}
@@ -600,7 +689,6 @@ export const Workflows: React.FC = () => {
               <div className="w-full max-w-xl space-y-4 py-2">
                 {(selectedWorkflow?.steps || []).map((step, idx) => {
                   const isSelected = selectedStep?.id === step.id;
-                  const isBranchNode = step.type === 'verify_data' || step.type === 'condition_branch' || step.type === 'condition';
 
                   return (
                     <React.Fragment key={step.id}>
@@ -699,114 +787,162 @@ export const Workflows: React.FC = () => {
             </div>
 
             {/* Node Inspector Sidebar */}
-            <aside className="w-full md:w-96 bg-white border-l border-slate-200 p-6 flex flex-col justify-between overflow-y-auto">
-              {selectedStep ? (
-                <div className="space-y-6">
-                  <div>
-                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                      Node Inspector
-                    </span>
-                    <h3 className="text-base font-bold text-slate-900 mt-2">{selectedStep.name}</h3>
-                    <p className="text-xs font-mono text-slate-500 mt-1">ID: {selectedStep.id}</p>
-                  </div>
-
-                  {/* Node Type & Telemetry */}
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Node Type</span>
-                      <span className="font-semibold text-slate-900 font-mono">
-                        {selectedStep.type}
+            <aside className="w-full md:w-96 bg-white border-l border-slate-200 flex flex-col h-full overflow-hidden shrink-0">
+              <div
+                className="flex-1 overflow-y-auto min-h-0 p-6 space-y-6 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
+                style={{ scrollbarWidth: 'thin', scrollbarColor: '#94a3b8 #f1f5f9' }}
+              >
+                {selectedStep ? (
+                  <div className="space-y-6">
+                    <div>
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        Node Inspector
                       </span>
+                      <h3 className="text-base font-bold text-slate-900 mt-2">{selectedStep.name}</h3>
+                      <p className="text-xs font-mono text-slate-500 mt-1">ID: {selectedStep.id}</p>
                     </div>
 
-                    {selectedStep.nextStepId && (
+                    {/* Node Type & Telemetry */}
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3 text-xs">
                       <div className="flex justify-between">
-                        <span className="text-slate-500">Next Step</span>
-                        <span className="font-mono text-emerald-700 font-semibold">
-                          {selectedStep.nextStepId}
+                        <span className="text-slate-500">Node Type</span>
+                        <span className="font-semibold text-slate-900 font-mono">
+                          {selectedStep.type}
                         </span>
+                      </div>
+
+                      {selectedStep.nextStepId && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Next Step</span>
+                          <span className="font-mono text-emerald-700 font-semibold">
+                            {selectedStep.nextStepId}
+                          </span>
+                        </div>
+                      )}
+
+                      {selectedStep.onSuccessStepId && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">On Success</span>
+                          <span className="font-mono text-emerald-700 font-semibold">
+                            {selectedStep.onSuccessStepId}
+                          </span>
+                        </div>
+                      )}
+
+                      {selectedStep.onFailureStepId && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">On Failure</span>
+                          <span className="font-mono text-rose-700 font-semibold">
+                            {selectedStep.onFailureStepId}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* WhatsApp Message Interactive Buttons Preview */}
+                    {selectedStep.type === 'send_message' && (
+                      <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                            <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                            WhatsApp Message Output
+                          </label>
+                          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                            {(selectedStep.config?.buttons || []).length > 0 ? 'Interactive' : 'Plain Text'}
+                          </span>
+                        </div>
+
+                        <p className="p-2.5 rounded-lg bg-white border border-emerald-200 text-xs font-mono text-slate-800 leading-relaxed">
+                          {selectedStep.config?.messageTemplate || selectedStep.config?.body || 'Hello {{firstName}}!'}
+                        </p>
+
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                            Buttons Rendered on Candidate Mobile:
+                          </span>
+                          {(selectedStep.config?.buttons || []).length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {(selectedStep.config?.buttons || []).map((btn: any, bIdx: number) => (
+                                <span
+                                  key={bIdx}
+                                  className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-600 text-white flex items-center gap-1.5 shadow-2xs"
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                                  {btn.title}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-2 rounded bg-sky-50 border border-sky-200 text-[11px] text-sky-900 flex items-center gap-1.5">
+                              <Send className="w-3.5 h-3.5 text-sky-600" />
+                              <span>Normal Reply (No Buttons Attached)</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 
-                    {selectedStep.onSuccessStepId && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">On Success</span>
-                        <span className="font-mono text-emerald-700 font-semibold">
-                          {selectedStep.onSuccessStepId}
-                        </span>
+                    {/* JSON Config Parameters */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                        Runtime Configuration
+                      </label>
+                      <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-xs font-mono overflow-x-auto leading-relaxed border border-slate-800">
+                        {JSON.stringify(selectedStep.config, null, 2)}
+                      </pre>
+                    </div>
+
+                    {/* Architectural Verification Guarantees */}
+                    {selectedStep.type === 'verify_data' && (
+                      <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1.5">
+                        <p className="font-semibold flex items-center gap-1.5">
+                          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                          Verification Contract
+                        </p>
+                        <p className="text-[11px] text-emerald-700 leading-relaxed">
+                          Evaluates candidate phone in Google Sheets on Google Drive. If row matches,
+                          persists <code className="bg-emerald-100 px-1 rounded">surveyVerified: true</code> in
+                          execution state, tags contact with <code className="bg-emerald-100 px-1 rounded">survey_verified</code>,
+                          and transitions to <code className="bg-emerald-100 px-1 rounded">{selectedStep.onSuccessStepId}</code>.
+                        </p>
                       </div>
                     )}
 
-                    {selectedStep.onFailureStepId && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">On Failure</span>
-                        <span className="font-mono text-rose-700 font-semibold">
-                          {selectedStep.onFailureStepId}
-                        </span>
+                    {(selectedStep.type === 'ai_agent' || selectedStep.type === 'ai_conversation') && (
+                      <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-800 space-y-1.5">
+                        <p className="font-semibold flex items-center gap-1.5">
+                          <Cpu className="w-4 h-4 text-indigo-600" />
+                          AI Agent Guardrails
+                        </p>
+                        <p className="text-[11px] text-indigo-700 leading-relaxed">
+                          Grounded strictly on Knowledge Base articles. Sandboxed tools with Zod validation.
+                          Escalates to human operator if user requests human or confidence drops below 0.60.
+                        </p>
+                      </div>
+                    )}
+
+                    {(selectedStep.type === 'update_contact' || selectedStep.type === 'update_record') && (
+                      <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1.5">
+                        <p className="font-semibold flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          Candidate State & Tagging
+                        </p>
+                        <p className="text-[11px] text-emerald-700 leading-relaxed">
+                          Applies qualified status, tags contact with <code className="bg-emerald-100 px-1 rounded">survey_verified</code>,
+                          and schedules interview rounds.
+                        </p>
                       </div>
                     )}
                   </div>
-
-                  {/* JSON Config Parameters */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      Runtime Configuration
-                    </label>
-                    <pre className="p-3 bg-slate-900 text-slate-200 rounded-xl text-xs font-mono overflow-x-auto leading-relaxed border border-slate-800">
-                      {JSON.stringify(selectedStep.config, null, 2)}
-                    </pre>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+                    <Layers className="w-8 h-8 text-slate-300 mb-2" />
+                    <p className="text-xs">Select a node to inspect parameters</p>
                   </div>
+                )}
+              </div>
 
-                  {/* Architectural Verification Guarantees */}
-                  {selectedStep.type === 'verify_data' && (
-                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1.5">
-                      <p className="font-semibold flex items-center gap-1.5">
-                        <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                        Verification Contract
-                      </p>
-                      <p className="text-[11px] text-emerald-700 leading-relaxed">
-                        Evaluates candidate phone in Google Sheets on Google Drive. If row matches,
-                        persists <code className="bg-emerald-100 px-1 rounded">surveyVerified: true</code> in
-                        execution state, tags contact with <code className="bg-emerald-100 px-1 rounded">survey_verified</code>,
-                        and transitions to <code className="bg-emerald-100 px-1 rounded">{selectedStep.onSuccessStepId}</code>.
-                      </p>
-                    </div>
-                  )}
-
-                  {(selectedStep.type === 'ai_agent' || selectedStep.type === 'ai_conversation') && (
-                    <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-800 space-y-1.5">
-                      <p className="font-semibold flex items-center gap-1.5">
-                        <Cpu className="w-4 h-4 text-indigo-600" />
-                        AI Agent Guardrails
-                      </p>
-                      <p className="text-[11px] text-indigo-700 leading-relaxed">
-                        Grounded strictly on Knowledge Base articles. Sandboxed tools with Zod validation.
-                        Escalates to human operator if user requests human or confidence drops below 0.60.
-                      </p>
-                    </div>
-                  )}
-
-                  {(selectedStep.type === 'update_contact' || selectedStep.type === 'update_record') && (
-                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1.5">
-                      <p className="font-semibold flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        Candidate State & Tagging
-                      </p>
-                      <p className="text-[11px] text-emerald-700 leading-relaxed">
-                        Applies qualified status, tags contact with <code className="bg-emerald-100 px-1 rounded">survey_verified</code>,
-                        and schedules interview rounds.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-                  <Layers className="w-8 h-8 text-slate-300 mb-2" />
-                  <p className="text-xs">Select a node to inspect parameters</p>
-                </div>
-              )}
-
-              <div className="pt-6 border-t border-slate-200">
+              <div className="p-4 border-t border-slate-200 shrink-0 bg-white">
                 <Button
                   variant="outline"
                   size="sm"
@@ -821,7 +957,7 @@ export const Workflows: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 2: Execution Runs */}
+        {/* Tab 3: Execution Runs */}
         {activeTab === 'executions' && (
           <div className="flex-1 p-8 overflow-y-auto">
             <Card className="border-slate-200 bg-white shadow-xs overflow-hidden">
@@ -947,6 +1083,109 @@ export const Workflows: React.FC = () => {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Create New Workflow Modal */}
+      <Modal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        title="Create New Automation Workflow"
+        description="Design a WhatsApp candidate recruitment DAG with interactive buttons, conditional branches, and external verification."
+        maxWidth="lg"
+      >
+        <form onSubmit={handleCreateWorkflow} className="space-y-4 mt-2">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Workflow Name <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Senior Backend Dev Screening (YES/NO)"
+              value={newWorkflowName}
+              onChange={(e) => setNewWorkflowName(e.target.value)}
+              className="w-full text-xs font-medium bg-white border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Description (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="Brief note on what this recruitment sequence accomplishes"
+              value={newWorkflowDesc}
+              onChange={(e) => setNewWorkflowDesc(e.target.value)}
+              className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-2">
+              Choose Starter Blueprint:
+            </label>
+            <div className="grid grid-cols-1 gap-2.5">
+              {(Object.keys(STARTER_TEMPLATES) as Array<keyof typeof STARTER_TEMPLATES>).map((key) => {
+                const tpl = STARTER_TEMPLATES[key];
+                const Icon = tpl.icon;
+                const isSelected = selectedTemplate === key;
+                return (
+                  <div
+                    key={key}
+                    onClick={() => setSelectedTemplate(key)}
+                    className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                      isSelected
+                        ? 'border-emerald-500 bg-emerald-50/70 shadow-xs ring-1 ring-emerald-400'
+                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div
+                        className={`p-1.5 rounded-lg shrink-0 ${
+                          isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900">{tpl.label}</span>
+                          {isSelected && (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                              Selected
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{tpl.desc}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="pt-3 flex justify-end gap-2 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setIsCreateModalOpen(false)}
+              disabled={isCreatingWorkflow}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              isLoading={isCreatingWorkflow}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              <span>Create & Open Canvas</span>
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

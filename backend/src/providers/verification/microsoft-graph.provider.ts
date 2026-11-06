@@ -207,5 +207,43 @@ export class MicrosoftGraphVerificationProvider implements IVerificationProvider
     const data = (await res.json()) as any;
     return data.values || [];
   }
+
+  public async appendRow(
+    worksheetName: string,
+    rowValues: any[]
+  ): Promise<{ success: boolean; rowNumber?: number }> {
+    const targetSheet = worksheetName || this.config.worksheetName || 'Responses';
+
+    if (this.config.mockMode || !this.config.clientId || !this.config.tenantId) {
+      logger.info('MicrosoftGraphVerificationProvider [Mock Mode] Appended row to Excel workbook', {
+        worksheetName: targetSheet,
+        rowValues
+      });
+      return { success: true, rowNumber: Math.floor(Math.random() * 500) + 1 };
+    }
+
+    try {
+      const accessToken = await this.getAccessToken();
+      const url = `https://graph.microsoft.com/v1.0/drives/${this.config.driveId}/items/${this.config.workbookItemId}/workbook/worksheets/${encodeURIComponent(targetSheet)}/tables/Table1/rows/add`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: [rowValues] })
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Microsoft Graph Excel row append failed: ${err}`);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      logger.error('Failed to append row in Excel Online', { error: err.message });
+      throw new AppError(`Excel Online append failed: ${err.message}`, 502, 'MS_GRAPH_ERROR');
+    }
+  }
 }
 

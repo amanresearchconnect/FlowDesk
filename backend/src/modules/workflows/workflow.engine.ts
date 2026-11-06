@@ -20,29 +20,42 @@ export class WorkflowEngine {
     workflowId: string,
     contactId: string,
     campaignId?: string,
-    initialVariables: Record<string, any> = {}
+    initialVariables: Record<string, any> = {},
+    startStepId?: string
   ): Promise<IWorkflowExecutionDocument> {
     const workflow = await Workflow.findById(workflowId);
     if (!workflow) {
       throw new NotFoundError('Workflow not found');
     }
 
-    const triggerNode = workflow.nodes.find((n) => n.type === 'trigger') || workflow.nodes[0];
-    if (!triggerNode) {
+    const initialNode = startStepId
+      ? (workflow.nodes.find((n) => n.id === startStepId) || workflow.nodes[0])
+      : (workflow.nodes.find((n) => n.type === 'trigger') || workflow.nodes[0]);
+
+    if (!initialNode) {
       throw new ValidationError('Workflow must contain at least one node');
     }
+
+    // Cancel or complete previous executions for this contact to prevent dual processing
+    await WorkflowExecution.updateMany(
+      {
+        contactId: new Types.ObjectId(contactId),
+        status: { $in: ['running', 'waiting_for_reply', 'paused_for_human', 'delayed'] }
+      },
+      { $set: { status: 'completed' } }
+    );
 
     const execution = await WorkflowExecution.create({
       workflowId: workflow._id,
       campaignId: campaignId ? new Types.ObjectId(campaignId) : null,
       contactId: new Types.ObjectId(contactId),
       status: 'running',
-      currentStepId: triggerNode.id,
+      currentStepId: initialNode.id,
       variables: initialVariables,
       stepLogs: [
         {
-          stepId: triggerNode.id,
-          stepType: triggerNode.type,
+          stepId: initialNode.id,
+          stepType: initialNode.type,
           status: 'started',
           inputPayload: initialVariables,
           timestamp: new Date()
@@ -53,11 +66,23 @@ export class WorkflowEngine {
     logger.info('Workflow execution started', {
       executionId: execution._id.toString(),
       workflowId,
-      contactId
+      contactId,
+      startStepId: initialNode.id
     });
 
-    // Run first step
-    await this.executeStep(execution._id.toString(), triggerNode.id);
+    // Make sure conversation is in 'bot' status so automated bot processes candidate replies
+    const conv = await Conversation.findOne({ contactId: new Types.ObjectId(contactId) });
+    if (conv) {
+      conv.status = 'bot';
+      conv.assignedUserId = undefined;
+      await conv.save();
+      const statusPayload = { conversationId: conv._id.toString(), status: 'bot' };
+      emitToConversation(conv._id.toString(), 'conversation:status_changed', statusPayload);
+      emitToTeam('conversation:status_changed', statusPayload);
+    }
+
+    // Run chosen step
+    await this.executeStep(execution._id.toString(), initialNode.id);
 
     const updated = await WorkflowExecution.findById(execution._id);
     return updated || execution;
@@ -91,6 +116,7 @@ export class WorkflowEngine {
         break;
       }
 
+      case 'send_text_message':
       case 'send_message': {
         const contact = await Contact.findById(execution.contactId);
         if (!contact) {
@@ -108,9 +134,11 @@ export class WorkflowEngine {
         };
         const messageBody = interpolateTemplate(template, mergeContext);
 
-        const buttons = Array.isArray(node.config.buttons) && node.config.buttons.length > 0
-          ? node.config.buttons
-          : undefined;
+        const buttons = node.type === 'send_text_message'
+          ? undefined
+          : (Array.isArray(node.config.buttons) && node.config.buttons.length > 0
+            ? node.config.buttons
+            : undefined);
 
         const provider = getMessagingProvider();
         const sendResult = await provider.sendMessage(contact.phone, {
@@ -155,6 +183,13 @@ export class WorkflowEngine {
           sentAt: sendResult.timestamp
         });
 
+        // When interactive buttons are dispatched, clear any previous reply variable
+        // so succeeding condition nodes pause and wait for a fresh candidate response
+        if (buttons && buttons.length > 0) {
+          execution.variables.lastReply = null;
+          execution.markModified('variables');
+        }
+
         this.logStep(execution, node, 'completed', { messageBody }, { providerMessageId: sendResult.providerMessageId });
         await execution.save();
 
@@ -176,19 +211,45 @@ export class WorkflowEngine {
       }
 
       case 'condition': {
-        const variableKey = node.config.variablePath || node.config.key;
-        const operator = node.config.operator || 'equals';
-        const expectedValue = node.config.expectedValue;
+        const variableKey = node.config.variablePath || node.config.key || 'lastReply';
         const actualValue = execution.variables[variableKey];
 
-        let matched = false;
-        if (operator === 'equals') {
-          matched = String(actualValue).toLowerCase() === String(expectedValue).toLowerCase();
-        } else if (operator === 'contains') {
-          matched = String(actualValue).toLowerCase().includes(String(expectedValue).toLowerCase());
+        // If condition evaluates contact's reply ('lastReply') and the contact has not replied yet,
+        // we MUST pause workflow execution and wait for the inbound reply / button tap!
+        if (variableKey === 'lastReply' && (actualValue === undefined || actualValue === null || actualValue === '')) {
+          execution.status = 'waiting_for_reply';
+          const timeoutHours = node.config.timeoutHours || 24;
+          execution.waitingForReplyUntil = new Date(Date.now() + timeoutHours * 3600 * 1000);
+          this.logStep(execution, node, 'started', { waitingForContactReply: true, timeoutHours });
+          await execution.save();
+          logger.info('Workflow execution paused at condition step awaiting candidate reply', {
+            executionId: execution._id.toString(),
+            stepId: node.id
+          });
+          break;
         }
 
-        const nextStep = matched ? node.config.trueStepId : node.config.falseStepId;
+        const operator = node.config.operator || 'equals';
+        const expectedValue = node.config.expectedValue || (node.branches?.[0]?.conditionValue);
+
+        let matched = false;
+        const actualLower = String(actualValue || '').toLowerCase().trim();
+        const expectedValues = String(expectedValue || '')
+          .split(',')
+          .map((v) => v.trim().toLowerCase())
+          .filter(Boolean);
+
+        if (operator === 'equals') {
+          matched = expectedValues.some((val) => actualLower === val);
+        } else if (operator === 'contains') {
+          matched = expectedValues.some((val) => actualLower.includes(val) || val.includes(actualLower));
+        } else {
+          matched = expectedValues.some((val) => actualLower === val || actualLower.includes(val));
+        }
+
+        const nextStep = matched
+          ? (node.config.trueStepId || node.branches?.[0]?.targetStepId)
+          : (node.config.falseStepId || node.branches?.[1]?.targetStepId);
         this.logStep(execution, node, 'completed', { actualValue, operator, expectedValue }, { matched, nextStep });
         await execution.save();
 
@@ -257,6 +318,39 @@ export class WorkflowEngine {
 
         if (targetStep) {
           await this.advanceToStep(execution, targetStep);
+        }
+        break;
+      }
+
+      case 'append_to_sheet': {
+        const contact = await Contact.findById(execution.contactId);
+        const sheetName = node.config?.sheetName || 'Responses';
+        const providerName = node.config?.integrationType;
+
+        const contactObj = contact ? (contact.toObject() as any) : {};
+        const rowValues = [
+          contact ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Candidate' : 'Candidate',
+          contact?.phone || '',
+          contactObj.roleApplied || contactObj.customAttributes?.role || execution.variables?.role || 'Applicant',
+          execution.variables?.surveyVerified ? 'VERIFIED' : 'PASSED_SCREENING',
+          new Date().toISOString()
+        ];
+
+        try {
+          await VerificationService.appendRowToSheet({
+            sheetName,
+            rowValues,
+            providerName
+          });
+          this.logStep(execution, node, 'completed', { sheetName, rowValues });
+        } catch (err: any) {
+          logger.warn('Failed to append row to spreadsheet', { error: err.message });
+          this.logStep(execution, node, 'failed', { sheetName, error: err.message });
+        }
+
+        await execution.save();
+        if (node.nextStepId) {
+          await this.advanceToStep(execution, node.nextStepId);
         }
         break;
       }
@@ -343,7 +437,20 @@ export class WorkflowEngine {
     }
 
     const currentNode = workflow.nodes.find((n) => n.id === execution.currentStepId);
-    if (!currentNode || !currentNode.branches || currentNode.branches.length === 0) {
+    if (!currentNode) {
+      return { handled: false };
+    }
+
+    // Determine the node providing decision branches (either the current node or the condition node it leads to)
+    let branchSourceNode = currentNode;
+    if ((!branchSourceNode.branches || branchSourceNode.branches.length === 0) && branchSourceNode.nextStepId) {
+      const nextNode = workflow.nodes.find((n) => n.id === branchSourceNode.nextStepId);
+      if (nextNode && nextNode.branches && nextNode.branches.length > 0) {
+        branchSourceNode = nextNode;
+      }
+    }
+
+    if (!branchSourceNode.branches || branchSourceNode.branches.length === 0) {
       return { handled: false };
     }
 
@@ -352,15 +459,25 @@ export class WorkflowEngine {
     let defaultBranch: IWorkflowBranch | null = null;
 
     // Evaluate branch conditions
-    for (const branch of currentNode.branches) {
+    for (const branch of branchSourceNode.branches) {
       if (branch.conditionType === 'default') {
         defaultBranch = branch;
         continue;
       }
 
-      if (branch.conditionType === 'regex' && branch.conditionValue) {
+      const rawCondition = (branch.conditionValue || '').trim();
+      const textLower = text.toLowerCase().trim();
+      // Support comma-separated matching values (e.g. "YES, Interested, Apply, Sure")
+      const candidateValues = rawCondition
+        .split(',')
+        .map((v) => v.trim().toLowerCase())
+        .filter(Boolean);
+
+      const rawConditionLower = rawCondition.toLowerCase();
+
+      if (branch.conditionType === 'regex' && rawCondition) {
         try {
-          const regex = new RegExp(branch.conditionValue, 'i');
+          const regex = new RegExp(rawCondition, 'i');
           if (regex.test(text)) {
             targetStepId = branch.targetStepId;
             break;
@@ -368,16 +485,14 @@ export class WorkflowEngine {
         } catch {
           // ignore invalid regex
         }
-      } else if (branch.conditionType === 'equals' && branch.conditionValue) {
-        if (text.toLowerCase() === branch.conditionValue.toLowerCase()) {
-          targetStepId = branch.targetStepId;
-          break;
-        }
-      } else if (branch.conditionType === 'contains' && branch.conditionValue) {
-        if (text.toLowerCase().includes(branch.conditionValue.toLowerCase())) {
-          targetStepId = branch.targetStepId;
-          break;
-        }
+      } else if (
+        rawConditionLower === textLower ||
+        rawConditionLower.includes(textLower) ||
+        textLower.includes(rawConditionLower) ||
+        candidateValues.some((val) => textLower === val || textLower.includes(val) || val.includes(textLower))
+      ) {
+        targetStepId = branch.targetStepId;
+        break;
       }
     }
 
@@ -396,7 +511,7 @@ export class WorkflowEngine {
     execution.status = 'running';
     execution.currentStepId = targetStepId;
 
-    this.logStep(execution, currentNode, 'completed', { replyText: text }, { targetStepId });
+    this.logStep(execution, branchSourceNode, 'completed', { replyText: text }, { targetStepId });
     await execution.save();
 
     logger.info('Workflow branched on contact reply', {
@@ -430,6 +545,132 @@ export class WorkflowEngine {
       outputPayload,
       timestamp: new Date()
     });
+
+    // Broadcast execution progress to listening conversation room & team
+    Conversation.findOne({ contactId: execution.contactId }).then((conv) => {
+      if (conv) {
+        const payload = {
+          conversationId: conv._id.toString(),
+          executionId: execution._id.toString(),
+          workflowId: execution.workflowId.toString(),
+          currentStepId: execution.currentStepId,
+          status: execution.status,
+          variables: execution.variables,
+          latestLog: {
+            stepId: node.id,
+            stepType: node.type,
+            stepName: node.name,
+            status,
+            timestamp: new Date()
+          }
+        };
+        emitToConversation(conv._id.toString(), 'workflow:step_progress', payload);
+        emitToTeam('workflow:step_progress', payload);
+      }
+    }).catch(() => {});
+  }
+
+  public static async pauseExecution(executionId: string): Promise<IWorkflowExecutionDocument> {
+    if (!mongoose.isValidObjectId(executionId)) {
+      throw new ValidationError('Invalid execution ID format');
+    }
+    const execution = await WorkflowExecution.findById(executionId);
+    if (!execution) {
+      throw new NotFoundError('Workflow execution not found');
+    }
+    execution.status = 'paused_for_human';
+    await execution.save();
+
+    const conv = await Conversation.findOne({ contactId: execution.contactId });
+    if (conv) {
+      conv.status = 'agent_assigned';
+      await conv.save();
+      const payload = {
+        conversationId: conv._id.toString(),
+        executionId: execution._id.toString(),
+        status: 'paused_for_human'
+      };
+      emitToConversation(conv._id.toString(), 'workflow:step_progress', payload);
+      emitToTeam('workflow:step_progress', payload);
+    }
+    return execution;
+  }
+
+  public static async resumeExecution(executionId: string): Promise<IWorkflowExecutionDocument> {
+    if (!mongoose.isValidObjectId(executionId)) {
+      throw new ValidationError('Invalid execution ID format');
+    }
+    const execution = await WorkflowExecution.findById(executionId);
+    if (!execution) {
+      throw new NotFoundError('Workflow execution not found');
+    }
+    execution.status = 'waiting_for_reply';
+    await execution.save();
+
+    const conv = await Conversation.findOne({ contactId: execution.contactId });
+    if (conv) {
+      conv.status = 'bot';
+      await conv.save();
+      const payload = {
+        conversationId: conv._id.toString(),
+        executionId: execution._id.toString(),
+        status: 'waiting_for_reply'
+      };
+      emitToConversation(conv._id.toString(), 'workflow:step_progress', payload);
+      emitToTeam('workflow:step_progress', payload);
+    }
+    return execution;
+  }
+
+  public static async advanceExecution(
+    executionId: string,
+    targetStepId: string,
+    simulatedReply?: string
+  ): Promise<IWorkflowExecutionDocument> {
+    if (!mongoose.isValidObjectId(executionId)) {
+      throw new ValidationError('Invalid execution ID format');
+    }
+    const execution = await WorkflowExecution.findById(executionId);
+    if (!execution) {
+      throw new NotFoundError('Workflow execution not found');
+    }
+
+    if (simulatedReply) {
+      execution.variables.lastReply = simulatedReply;
+      execution.variables.lastReplyAt = new Date();
+      execution.markModified('variables');
+    }
+
+    execution.status = 'running';
+    execution.currentStepId = targetStepId;
+    await execution.save();
+
+    const conv = await Conversation.findOne({ contactId: execution.contactId });
+    if (conv) {
+      conv.status = 'bot';
+      conv.assignedUserId = undefined;
+      await conv.save();
+
+      const statusPayload = { conversationId: conv._id.toString(), status: 'bot' };
+      emitToConversation(conv._id.toString(), 'conversation:status_changed', statusPayload);
+      emitToTeam('conversation:status_changed', statusPayload);
+
+      const payload = {
+        conversationId: conv._id.toString(),
+        executionId: execution._id.toString(),
+        currentStepId: targetStepId,
+        status: 'running'
+      };
+      emitToConversation(conv._id.toString(), 'workflow:step_progress', payload);
+      emitToTeam('workflow:step_progress', payload);
+    }
+
+    // Execute the advanced step asynchronously
+    this.executeStep(execution._id.toString(), targetStepId).catch((err) => {
+      logger.error('Failed to execute advanced step', { error: err.message, executionId, targetStepId });
+    });
+
+    return execution;
   }
 }
 

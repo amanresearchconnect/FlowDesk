@@ -9,7 +9,8 @@ import {
   UserCheck,
   XCircle,
   HelpCircle,
-  Bot
+  Bot,
+  Send
 } from 'lucide-react';
 
 export interface WorkflowNodeData {
@@ -117,7 +118,10 @@ export const MessageNode: React.FC<NodeProps> = ({ data, selected }) => {
             </div>
           </div>
         ) : (
-          <div className="text-[10px] text-slate-400 italic">No buttons (freeform text message)</div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-semibold border border-slate-200">
+            <Send className="w-3 h-3 text-sky-600" />
+            <span>Normal Reply (No Buttons)</span>
+          </div>
         )}
       </div>
 
@@ -130,12 +134,19 @@ export const MessageNode: React.FC<NodeProps> = ({ data, selected }) => {
   );
 };
 
-// 3. Decision Branch Node (Dual Handles: YES on left, NO on right)
+// 3. Decision Branch Node (Dual Handles: YES/Positive on left, NO/Negative on right)
 export const DecisionNode: React.FC<NodeProps> = ({ data, selected }) => {
   const nodeData = data as unknown as WorkflowNodeData;
   const branches = nodeData.branches || [];
-  const yesBranch = branches.find((b) => b.conditionValue?.toLowerCase() === 'yes') || branches[0];
-  const noBranch = branches.find((b) => b.conditionValue?.toLowerCase() === 'no') || branches[1];
+  const yesBranch = branches.find((b) => b.conditionValue?.toLowerCase().includes('yes')) || branches[0];
+  const noBranch = branches.find((b) => b.conditionValue?.toLowerCase().includes('no')) || branches[1];
+
+  const yesLabel = nodeData.config?.yesValue
+    ? nodeData.config.yesValue.split(',')[0].trim()
+    : (yesBranch?.conditionValue ? yesBranch.conditionValue.split(',')[0].trim() : 'YES / Interested');
+  const noLabel = nodeData.config?.noValue
+    ? nodeData.config.noValue.split(',')[0].trim()
+    : (noBranch?.conditionValue ? noBranch.conditionValue.split(',')[0].trim() : 'NO / Declined');
 
   return (
     <div
@@ -165,13 +176,17 @@ export const DecisionNode: React.FC<NodeProps> = ({ data, selected }) => {
         </p>
         <div className="grid grid-cols-2 gap-2 pt-1">
           <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-center">
-            <span className="text-xs font-bold text-emerald-700 block">YES / Interested</span>
+            <span className="text-xs font-bold text-emerald-800 truncate block" title={yesLabel}>
+              {yesLabel}
+            </span>
             <span className="text-[10px] text-emerald-600/80 truncate block">
               {yesBranch?.targetStepId || 'Target Step'}
             </span>
           </div>
           <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-center">
-            <span className="text-xs font-bold text-rose-700 block">NO / Declined</span>
+            <span className="text-xs font-bold text-rose-800 truncate block" title={noLabel}>
+              {noLabel}
+            </span>
             <span className="text-[10px] text-rose-600/80 truncate block">
               {noBranch?.targetStepId || 'Target Step'}
             </span>
@@ -179,10 +194,10 @@ export const DecisionNode: React.FC<NodeProps> = ({ data, selected }) => {
         </div>
       </div>
 
-      {/* Sockets for branching */}
-      <div className="relative h-6 bg-slate-50 rounded-b-xl border-t border-slate-100 flex items-center justify-between px-6 text-[10px] font-bold">
-        <span className="text-emerald-700">YES Socket</span>
-        <span className="text-rose-700">NO Socket</span>
+      {/* Sockets for branching with dynamic labels */}
+      <div className="relative h-6 bg-slate-50 rounded-b-xl border-t border-slate-100 flex items-center justify-between px-4 text-[10px] font-bold">
+        <span className="text-emerald-700 truncate max-w-[110px]">{yesLabel} Socket</span>
+        <span className="text-rose-700 truncate max-w-[110px]">{noLabel} Socket</span>
       </div>
 
       {/* YES Socket Handle (Left) */}
@@ -190,7 +205,7 @@ export const DecisionNode: React.FC<NodeProps> = ({ data, selected }) => {
         type="source"
         position={Position.Bottom}
         id="yes"
-        style={{ left: '28%' }}
+        style={{ left: '25%' }}
         className="w-3.5 h-3.5 !bg-emerald-600 !border-2 !border-white"
       />
       {/* NO Socket Handle (Right) */}
@@ -198,7 +213,7 @@ export const DecisionNode: React.FC<NodeProps> = ({ data, selected }) => {
         type="source"
         position={Position.Bottom}
         id="no"
-        style={{ left: '72%' }}
+        style={{ left: '75%' }}
         className="w-3.5 h-3.5 !bg-rose-500 !border-2 !border-white"
       />
     </div>
@@ -389,9 +404,11 @@ export const TerminateNode: React.FC<NodeProps> = ({ data, selected }) => {
 export const nodeTypes = {
   trigger: TriggerNode,
   send_message: MessageNode,
+  send_text_message: MessageNode,
   condition: DecisionNode,
   update_record: ActionNode,
   verify_data: VerifyNode,
+  append_to_sheet: VerifyNode,
   ai_conversation: AINode,
   human_handoff: HandoffNode,
   terminate: TerminateNode

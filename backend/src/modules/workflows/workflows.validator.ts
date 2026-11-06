@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 const workflowBranchSchema = z.object({
   conditionType: z.enum(['equals', 'regex', 'contains', 'default']),
-  conditionValue: z.string().optional(),
-  targetStepId: z.string().min(1, 'Target step ID is required')
+  conditionValue: z.string().optional().nullable(),
+  targetStepId: z.string().optional().default('')
 });
 
 const workflowNodeSchema = z.object({
@@ -11,10 +11,12 @@ const workflowNodeSchema = z.object({
   type: z.enum([
     'trigger',
     'send_message',
+    'send_text_message',
     'wait_for_reply',
     'condition',
     'delay',
     'verify_data',
+    'append_to_sheet',
     'update_record',
     'ai_conversation',
     'human_handoff',
@@ -29,7 +31,8 @@ const workflowNodeSchema = z.object({
 export const createWorkflowSchema = z.object({
   name: z.string().trim().min(2, 'Workflow name must be at least 2 characters').max(150),
   description: z.string().trim().optional(),
-  nodes: z.array(workflowNodeSchema).min(1, 'Workflow must contain at least one node')
+  nodes: z.array(workflowNodeSchema).min(1, 'Workflow must contain at least one node'),
+  isPublished: z.boolean().optional().default(true)
 });
 
 export const updateWorkflowSchema = z.object({

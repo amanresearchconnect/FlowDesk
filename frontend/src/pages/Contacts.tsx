@@ -15,7 +15,11 @@ import {
   Hash,
   Phone,
   RefreshCw,
-  Plus
+  Plus,
+  Trash2,
+  AlertTriangle,
+  FolderPlus,
+  UserPlus
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -112,10 +116,35 @@ export const Contacts: React.FC = () => {
   // Single Contact Creation Modal
   const [isNewContactOpen, setIsNewContactOpen] = useState(false);
   const [newPhone, setNewPhone] = useState('');
+  const [newCountryCode, setNewCountryCode] = useState('IN');
   const [newFirstName, setNewFirstName] = useState('');
   const [newLastName, setNewLastName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState('');
+  const [newContactListId, setNewContactListId] = useState<string>('');
+  const [newTags, setNewTags] = useState('shortlisted');
+  const [isCreatingContact, setIsCreatingContact] = useState(false);
   const [createContactError, setCreateContactError] = useState<string | null>(null);
+
+  // Single Contact Deletion Modal
+  const [contactToDelete, setContactToDelete] = useState<Contact | null>(null);
+  const [isDeleteContactOpen, setIsDeleteContactOpen] = useState(false);
+  const [isDeletingContact, setIsDeletingContact] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<'from_list' | 'permanent'>('from_list');
+
+  // Contact Database (List) Creation Modal
+  const [isNewListOpen, setIsNewListOpen] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [newListDesc, setNewListDesc] = useState('');
+  const [isCreatingList, setIsCreatingList] = useState(false);
+  const [createListError, setCreateListError] = useState<string | null>(null);
+
+  // Contact Database (List) Deletion Modal
+  const [listToDelete, setListToDelete] = useState<ContactList | null>(null);
+  const [isDeleteListOpen, setIsDeleteListOpen] = useState(false);
+  const [confirmDeleteListName, setConfirmDeleteListName] = useState('');
+  const [isDeletingList, setIsDeletingList] = useState(false);
+  const [deleteListError, setDeleteListError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -154,6 +183,122 @@ export const Contacts: React.FC = () => {
       console.error('Failed to load contacts data:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleCreateSingleContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPhone.trim()) {
+      setCreateContactError('Valid phone number is required');
+      return;
+    }
+
+    setIsCreatingContact(true);
+    setCreateContactError(null);
+
+    try {
+      const targetList = newContactListId || (selectedListId !== 'all' ? selectedListId : undefined);
+      await api.post('/contacts', {
+        phone: newPhone.trim(),
+        countryCode: newCountryCode,
+        firstName: newFirstName.trim() || undefined,
+        lastName: newLastName.trim() || undefined,
+        email: newEmail.trim() || undefined,
+        contactListId: targetList,
+        customFields: newRole.trim() ? { roleApplied: newRole.trim() } : {},
+        tags: newTags
+          ? newTags.split(',').map((t) => t.trim()).filter(Boolean)
+          : []
+      });
+
+      setIsNewContactOpen(false);
+      setNewPhone('');
+      setNewFirstName('');
+      setNewLastName('');
+      setNewEmail('');
+      setNewRole('');
+      setNewTags('shortlisted');
+      await loadData();
+    } catch (err: any) {
+      setCreateContactError(err.message || 'Failed to add contact');
+    } finally {
+      setIsCreatingContact(false);
+    }
+  };
+
+  const handleConfirmDeleteContact = async () => {
+    if (!contactToDelete) return;
+    const contactId = contactToDelete.id || contactToDelete._id;
+    if (!contactId) return;
+
+    setIsDeletingContact(true);
+    try {
+      const listParam = (selectedListId !== 'all' && deleteMode === 'from_list')
+        ? `?contactListId=${selectedListId}`
+        : '';
+      await api.delete(`/contacts/${contactId}${listParam}`);
+      setIsDeleteContactOpen(false);
+      setContactToDelete(null);
+      await loadData();
+    } catch (err: any) {
+      alert(`Failed to delete contact: ${err.message}`);
+    } finally {
+      setIsDeletingContact(false);
+    }
+  };
+
+  const handleCreateNewList = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newListName.trim()) return;
+
+    setIsCreatingList(true);
+    setCreateListError(null);
+
+    try {
+      const res = await api.post('/contact-lists', {
+        name: newListName.trim(),
+        description: newListDesc.trim() || undefined
+      });
+      setIsNewListOpen(false);
+      setNewListName('');
+      setNewListDesc('');
+      await loadData();
+      if (res.data?.id) {
+        setSelectedListId(res.data.id);
+      }
+    } catch (err: any) {
+      setCreateListError(err.message || 'Failed to create contact database');
+    } finally {
+      setIsCreatingList(false);
+    }
+  };
+
+  const handleConfirmDeleteList = async () => {
+    if (!listToDelete) return;
+    const listId = listToDelete.id || listToDelete._id;
+    if (!listId) return;
+
+    if (confirmDeleteListName !== listToDelete.name) {
+      setDeleteListError(`Please type "${listToDelete.name}" exactly to confirm deletion.`);
+      return;
+    }
+
+    setIsDeletingList(true);
+    setDeleteListError(null);
+
+    try {
+      await api.delete(`/contact-lists/${listId}`);
+      setIsDeleteListOpen(false);
+      setListToDelete(null);
+      setConfirmDeleteListName('');
+      if (selectedListId === listId) {
+        setSelectedListId('all');
+      }
+      await loadData();
+    } catch (err: any) {
+      setDeleteListError(err.message || 'Failed to delete contact database');
+    } finally {
+      setIsDeletingList(false);
     }
   };
 
@@ -358,6 +503,19 @@ export const Contacts: React.FC = () => {
               <span>Refresh</span>
             </Button>
             <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCreateContactError(null);
+                setNewContactListId(selectedListId !== 'all' ? selectedListId : (contactLists[0]?.id || ''));
+                setIsNewContactOpen(true);
+              }}
+              className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+            >
+              <UserPlus className="w-4 h-4 text-emerald-600" />
+              <span>Add Contact</span>
+            </Button>
+            <Button
               variant="primary"
               size="sm"
               onClick={() => setIsImportModalOpen(true)}
@@ -507,18 +665,39 @@ export const Contacts: React.FC = () => {
 
               {/* Contact List Filter */}
               {contactLists.length > 0 && (
-                <select
-                  value={selectedListId}
-                  onChange={(e) => setSelectedListId(e.target.value)}
-                  className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                >
-                  <option value="all">All Ingestion Lists</option>
-                  {contactLists.map((l) => (
-                    <option key={l.id || l._id} value={l.id || l._id}>
-                      {l.name} ({l.totalCount})
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={selectedListId}
+                    onChange={(e) => setSelectedListId(e.target.value)}
+                    className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="all">All Ingestion Lists</option>
+                    {contactLists.map((l) => (
+                      <option key={l.id || l._id} value={l.id || l._id}>
+                        {l.name} ({l.totalCount})
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedListId !== 'all' && (
+                    <button
+                      onClick={() => {
+                        const currentList = contactLists.find((l) => (l.id || l._id) === selectedListId);
+                        if (currentList) {
+                          setListToDelete(currentList);
+                          setConfirmDeleteListName('');
+                          setDeleteListError(null);
+                          setIsDeleteListOpen(true);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition-colors"
+                      title="Delete this entire contact database"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Delete DB</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -649,16 +828,30 @@ export const Contacts: React.FC = () => {
                             {formatDate(contact.createdAt)}
                           </td>
 
-                          {/* Action: Quick Message */}
+                          {/* Action: Quick Message & Delete */}
                           <td className="py-3 px-4 text-right">
-                            <button
-                              onClick={() => navigate(`/inbox`)}
-                              title="Open conversation in Team Inbox"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md border border-emerald-200/60 transition-colors"
-                            >
-                              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Inbox</span>
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => navigate(`/inbox`)}
+                                title="Open conversation in Team Inbox"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md border border-emerald-200/60 transition-colors"
+                              >
+                                <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Inbox</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setContactToDelete(contact);
+                                  setDeleteMode(selectedListId !== 'all' ? 'from_list' : 'permanent');
+                                  setIsDeleteContactOpen(true);
+                                }}
+                                title="Delete candidate contact"
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-md border border-rose-200/60 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                                <span>Delete</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -682,39 +875,107 @@ export const Contacts: React.FC = () => {
 
         {/* Tab 2: Target Lists Overview */}
         {activeTab === 'lists' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto">
-            {contactLists.map((list) => (
-              <Card key={list.id || list._id} className="p-5 border-slate-200 bg-white shadow-xs flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <div className="w-9 h-9 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
-                      <Database className="w-4 h-4" />
-                    </div>
-                    <Badge variant="indigo" className="font-mono">
-                      {list.totalCount} contacts
-                    </Badge>
-                  </div>
-                  <h3 className="font-semibold text-slate-900 text-base mt-3">{list.name}</h3>
-                  <p className="text-xs text-slate-500 mt-1 line-clamp-2">
-                    {list.description || 'Target campaign segment for automated recruitment flows.'}
-                  </p>
-                </div>
+          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-500 font-medium">
+                Showing {contactLists.length} candidate databases / cohort lists
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCreateListError(null);
+                  setIsNewListOpen(true);
+                }}
+                className="gap-1.5 text-xs border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-indigo-600" />
+                <span>New Contact Database</span>
+              </Button>
+            </div>
 
-                <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
-                  <span>Created {formatDate(list.createdAt)}</span>
-                  <button
+            {contactLists.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-64 text-slate-400 bg-white rounded-xl border border-slate-200">
+                <Database className="w-10 h-10 stroke-[1.5] text-slate-300 mb-2" />
+                <p className="text-sm font-medium text-slate-600">No contact databases found</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Create a manual database or import a candidate spreadsheet.
+                </p>
+                <div className="flex items-center gap-2 mt-4">
+                  <Button
+                    variant="primary"
+                    size="sm"
                     onClick={() => {
-                      setSelectedListId(list.id || list._id || '');
-                      setActiveTab('contacts');
+                      setCreateListError(null);
+                      setIsNewListOpen(true);
                     }}
-                    className="text-emerald-600 hover:text-emerald-700 font-medium inline-flex items-center gap-1"
+                    className="gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
                   >
-                    <span>View contacts</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Database</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsImportModalOpen(true)}
+                    className="gap-2 text-xs"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Import Spreadsheet</span>
+                  </Button>
                 </div>
-              </Card>
-            ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {contactLists.map((list) => (
+                  <Card key={list.id || list._id} className="p-5 border-slate-200 bg-white shadow-xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <div className="w-9 h-9 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
+                          <Database className="w-4 h-4" />
+                        </div>
+                        <Badge variant="indigo" className="font-mono">
+                          {list.totalCount} contacts
+                        </Badge>
+                      </div>
+                      <h3 className="font-semibold text-slate-900 text-base mt-3">{list.name}</h3>
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                        {list.description || 'Target campaign segment for automated recruitment flows.'}
+                      </p>
+                    </div>
+
+                    <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-400">
+                      <span>Created {formatDate(list.createdAt)}</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setListToDelete(list);
+                            setConfirmDeleteListName('');
+                            setDeleteListError(null);
+                            setIsDeleteListOpen(true);
+                          }}
+                          title="Delete entire contact database"
+                          className="text-rose-600 hover:text-rose-800 font-medium inline-flex items-center gap-1 px-2 py-1 hover:bg-rose-50 rounded transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete DB</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedListId(list.id || list._id || '');
+                            setActiveTab('contacts');
+                          }}
+                          className="text-emerald-600 hover:text-emerald-700 font-medium inline-flex items-center gap-1 px-2 py-1 hover:bg-emerald-50 rounded transition-colors"
+                        >
+                          <span>View contacts</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1041,6 +1302,394 @@ export const Contacts: React.FC = () => {
             </div>
           )}
         </div>
+      </Modal>
+
+      {/* MODAL 1: Add Candidate Contact to a Particular Database */}
+      <Modal
+        open={isNewContactOpen}
+        onOpenChange={setIsNewContactOpen}
+        title="Add Candidate Contact"
+        description="Add a candidate directly to a target contact database with automatic E.164 normalization."
+        maxWidth="md"
+      >
+        <form onSubmit={handleCreateSingleContact} className="space-y-3.5 mt-2">
+          {createContactError && (
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{createContactError}</span>
+            </div>
+          )}
+
+          {/* Target Contact Database (List) */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-700">
+              Target Contact Database (Cohort List)
+            </label>
+            <select
+              value={newContactListId}
+              onChange={(e) => setNewContactListId(e.target.value)}
+              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="">Global Directory (No specific cohort)</option>
+              {contactLists.map((l) => (
+                <option key={l.id || l._id} value={l.id || l._id}>
+                  📁 {l.name} ({l.totalCount} contacts)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Phone Number with Country Code */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-700">
+              WhatsApp Phone Number <span className="text-rose-500">*</span>
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={newCountryCode}
+                onChange={(e) => setNewCountryCode(e.target.value)}
+                className="w-28 h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 shrink-0"
+              >
+                <option value="IN">+91 (IN)</option>
+                <option value="US">+1 (US/CA)</option>
+                <option value="GB">+44 (UK)</option>
+                <option value="AE">+971 (UAE)</option>
+                <option value="AU">+61 (AU)</option>
+                <option value="SG">+65 (SG)</option>
+                <option value="DE">+49 (DE)</option>
+              </select>
+              <input
+                type="tel"
+                placeholder="e.g. 8655021064"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                required
+                className="flex-1 h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400">
+              Automatically converted to valid international E.164 format.
+            </p>
+          </div>
+
+          {/* Name Fields */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">First Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Aman"
+                value={newFirstName}
+                onChange={(e) => setNewFirstName(e.target.value)}
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">Last Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Singh"
+                value={newLastName}
+                onChange={(e) => setNewLastName(e.target.value)}
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Email & Role Applied */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">Email Address</label>
+              <input
+                type="email"
+                placeholder="candidate@example.com"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">Role Applied</label>
+              <input
+                type="text"
+                placeholder="e.g. Full Stack Developer"
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Tags */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-700">Tags (comma-separated)</label>
+            <input
+              type="text"
+              placeholder="e.g. shortlisted, screening_ready"
+              value={newTags}
+              onChange={(e) => setNewTags(e.target.value)}
+              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsNewContactOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              isLoading={isCreatingContact}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              <UserPlus className="w-3.5 h-3.5 mr-1" />
+              <span>Add Candidate</span>
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL 2: Delete Particular Contact Warning Modal */}
+      <Modal
+        open={isDeleteContactOpen}
+        onOpenChange={setIsDeleteContactOpen}
+        title="Confirm Candidate Deletion"
+        description="Review candidate removal options."
+        maxWidth="sm"
+      >
+        <div className="space-y-4 mt-2">
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200/80 flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs text-amber-900 space-y-1">
+              <p className="font-bold">
+                Delete candidate "{contactToDelete?.firstName} {contactToDelete?.lastName}"?
+              </p>
+              <p className="font-mono text-[11px] text-amber-800">
+                Phone: {contactToDelete?.phoneNumber || contactToDelete?.phone}
+              </p>
+            </div>
+          </div>
+
+          {selectedListId !== 'all' ? (
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-700 block">Deletion Scope:</label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50 cursor-pointer text-xs">
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    checked={deleteMode === 'from_list'}
+                    onChange={() => setDeleteMode('from_list')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-800 block">
+                      Remove from current list only
+                    </span>
+                    <span className="text-slate-500 text-[11px]">
+                      Disassociates candidate from this cohort while keeping their profile history.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2 p-2.5 rounded-lg border border-rose-200 bg-rose-50/50 cursor-pointer text-xs">
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    checked={deleteMode === 'permanent'}
+                    onChange={() => setDeleteMode('permanent')}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-semibold text-rose-900 block">
+                      Permanently delete candidate
+                    </span>
+                    <span className="text-rose-700 text-[11px]">
+                      Deletes contact completely across all databases and campaign cohorts.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600">
+              This action will permanently delete this candidate record from FlowDesk. Any active workflow runs for this contact will finish or terminate.
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsDeleteContactOpen(false)}
+              disabled={isDeletingContact}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleConfirmDeleteContact}
+              isLoading={isDeletingContact}
+              className="bg-rose-600 hover:bg-rose-700 text-white border-transparent"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              <span>{deleteMode === 'from_list' && selectedListId !== 'all' ? 'Remove from List' : 'Delete Permanently'}</span>
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL 3: Delete Entire Contact Database (Warning on Deletion) */}
+      <Modal
+        open={isDeleteListOpen}
+        onOpenChange={setIsDeleteListOpen}
+        title="Delete Entire Contact Database"
+        description="High-impact destructive database operation."
+        maxWidth="md"
+      >
+        <div className="space-y-4 mt-2">
+          {/* Critical Warning Alert Box */}
+          <div className="p-4 rounded-xl bg-rose-50 border-2 border-rose-300 space-y-2">
+            <div className="flex items-center gap-2 text-rose-900 font-bold text-xs uppercase tracking-wider">
+              <AlertTriangle className="w-4 h-4 text-rose-600" />
+              <span>Permanent Deletion Warning</span>
+            </div>
+            <p className="text-xs text-rose-950 leading-relaxed">
+              You are about to permanently delete the entire contact database{' '}
+              <strong className="underline font-bold text-rose-900">
+                "{listToDelete?.name}"
+              </strong>{' '}
+              containing <strong>{listToDelete?.totalCount || 0} candidate contacts</strong>.
+            </p>
+            <ul className="text-[11px] text-rose-800 space-y-1 list-disc pl-4">
+              <li>All candidate contacts that belong only to this database will be <strong>permanently erased</strong>.</li>
+              <li>Active or scheduled outreach campaigns referencing this database will lose their target cohort.</li>
+              <li>This action <strong>cannot be undone</strong>.</li>
+            </ul>
+          </div>
+
+          {deleteListError && (
+            <div className="p-2.5 rounded-lg bg-rose-100 border border-rose-200 text-xs text-rose-800">
+              {deleteListError}
+            </div>
+          )}
+
+          {/* Confirmation Typed Match */}
+          <div className="space-y-1.5 pt-1">
+            <label className="block text-xs font-semibold text-slate-800">
+              To confirm deletion, type <strong className="font-mono text-rose-700 font-bold">"{listToDelete?.name}"</strong> below:
+            </label>
+            <input
+              type="text"
+              placeholder={listToDelete?.name}
+              value={confirmDeleteListName}
+              onChange={(e) => setConfirmDeleteListName(e.target.value)}
+              className="w-full h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsDeleteListOpen(false);
+                setListToDelete(null);
+                setConfirmDeleteListName('');
+                setDeleteListError(null);
+              }}
+              disabled={isDeletingList}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleConfirmDeleteList}
+              isLoading={isDeletingList}
+              disabled={confirmDeleteListName !== listToDelete?.name || isDeletingList}
+              className="bg-rose-600 hover:bg-rose-700 text-white border-transparent disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              <span>Permanently Delete Database</span>
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL 4: Create New Contact Database (List) */}
+      <Modal
+        open={isNewListOpen}
+        onOpenChange={setIsNewListOpen}
+        title="Create New Contact Database"
+        description="Create a candidate database / cohort to organize your recruitment campaigns."
+        maxWidth="md"
+      >
+        <form onSubmit={handleCreateNewList} className="space-y-3.5 mt-2">
+          {createListError && (
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{createListError}</span>
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-700">
+              Database / Cohort Name <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Campus Recruitment 2026 - Engineering"
+              value={newListName}
+              onChange={(e) => setNewListName(e.target.value)}
+              required
+              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-700">Description</label>
+            <textarea
+              rows={3}
+              placeholder="e.g. Target candidates for full stack and backend engineering positions."
+              value={newListDesc}
+              onChange={(e) => setNewListDesc(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsNewListOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              isLoading={isCreatingList}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              <FolderPlus className="w-3.5 h-3.5 mr-1" />
+              <span>Create Database</span>
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

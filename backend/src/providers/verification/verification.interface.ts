@@ -24,5 +24,6 @@ export interface IVerificationProvider {
   name: string;
   verifySubmission(query: IVerificationQuery): Promise<IVerificationResult>;
   testConnection(): Promise<IVerificationStatus>;
+  appendRow?(sheetName: string, rowValues: any[]): Promise<{ success: boolean; rowNumber?: number }>;
 }
 

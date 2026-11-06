@@ -160,5 +160,61 @@ export class WorkflowsController {
       next(error);
     }
   }
+
+  public static async pauseExecution(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { WorkflowEngine } = await import('./workflow.engine.js');
+      const execution = await WorkflowEngine.pauseExecution(req.params.executionId);
+      res.status(200).json({
+        success: true,
+        data: execution.toSafeObject()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async resumeExecution(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { WorkflowEngine } = await import('./workflow.engine.js');
+      const execution = await WorkflowEngine.resumeExecution(req.params.executionId);
+      res.status(200).json({
+        success: true,
+        data: execution.toSafeObject()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async advanceExecution(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { targetStepId, replyText } = req.body;
+      const { WorkflowEngine } = await import('./workflow.engine.js');
+      const execution = await WorkflowEngine.advanceExecution(
+        req.params.executionId,
+        targetStepId,
+        replyText
+      );
+      res.status(200).json({
+        success: true,
+        data: execution.toSafeObject()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

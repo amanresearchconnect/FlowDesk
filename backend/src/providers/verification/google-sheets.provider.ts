@@ -179,5 +179,44 @@ export class GoogleSheetsVerificationProvider implements IVerificationProvider {
     const data = (await response.json()) as any;
     return data.values || [];
   }
+
+  public async appendRow(
+    sheetName: string,
+    rowValues: any[]
+  ): Promise<{ success: boolean; rowNumber?: number }> {
+    const targetSheet = sheetName || this.config.sheetName || 'Responses';
+
+    if (this.config.mockMode || !this.config.spreadsheetId) {
+      logger.info('GoogleSheetsVerificationProvider [Mock Mode] Appended row to sheet', {
+        sheetName: targetSheet,
+        rowValues
+      });
+      return { success: true, rowNumber: Math.floor(Math.random() * 500) + 1 };
+    }
+
+    try {
+      let url = `https://sheets.googleapis.com/v4/spreadsheets/${this.config.spreadsheetId}/values/${encodeURIComponent(targetSheet)}:append?valueInputOption=USER_ENTERED`;
+      if (this.config.apiKey) {
+        url += `&key=${this.config.apiKey}`;
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [rowValues] })
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Google Sheets API append failed: ${errorText}`);
+      }
+
+      const data = (await res.json()) as any;
+      return { success: true, rowNumber: data.updates?.updatedRows || 1 };
+    } catch (err: any) {
+      logger.error('Failed to append row in Google Sheets', { error: err.message });
+      throw new AppError(`Google Sheets append failed: ${err.message}`, 502, 'GOOGLE_SHEETS_ERROR');
+    }
+  }
 }
 

@@ -5,7 +5,7 @@ export const createCampaignSchema = z.object({
   description: z.string().trim().max(500).optional(),
   contactListId: z.string().min(1, 'Contact list ID is required'),
   workflowId: z.string().optional().nullable(),
-  messageTemplate: z.string().trim().min(1, 'Message template cannot be empty'),
+  messageTemplate: z.string().trim().optional().default('[Workflow Driven]'),
   buttons: z
     .array(
       z.object({

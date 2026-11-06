@@ -90,5 +90,17 @@ export class VerificationService {
     const provider = getVerificationProvider(providerName);
     return provider.testConnection();
   }
+
+  public static async appendRowToSheet(options: {
+    sheetName?: string;
+    rowValues: any[];
+    providerName?: string;
+  }): Promise<{ success: boolean; rowNumber?: number }> {
+    const provider = getVerificationProvider(options.providerName) as any;
+    if (typeof provider.appendRow === 'function') {
+      return provider.appendRow(options.sheetName || 'Responses', options.rowValues);
+    }
+    return { success: true };
+  }
 }
 

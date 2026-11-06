@@ -30,6 +30,24 @@ export const listContactListsQuerySchema = z.object({
   search: z.string().optional()
 });
 
+export const createContactSchema = z.object({
+  phone: z.string().trim().min(8, 'Phone number must be at least 8 digits'),
+  firstName: z.string().trim().max(100).optional().default(''),
+  lastName: z.string().trim().max(100).optional().default(''),
+  email: z.string().trim().email('Invalid email address').optional().or(z.literal('')).nullable(),
+  countryCode: z.string().trim().default('IN'),
+  contactListId: z.string().optional().nullable(),
+  tags: z.array(z.string().trim()).optional().default([]),
+  customFields: z.record(z.any()).optional().default({})
+});
+
+export const createContactListSchema = z.object({
+  name: z.string().trim().min(2, 'List name must be at least 2 characters').max(150),
+  description: z.string().trim().max(500).optional().default('')
+});
+
 export type ImportContactsInput = z.infer<typeof importContactsSchema>;
 export type ListContactsQuery = z.infer<typeof listContactsQuerySchema>;
+export type CreateContactInput = z.infer<typeof createContactSchema>;
+export type CreateContactListInput = z.infer<typeof createContactListSchema>;
 

@@ -48,11 +48,11 @@ export const Modal: React.FC<ModalProps> = ({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm transition-opacity animate-in fade-in" />
         <DialogPrimitive.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl border border-slate-200 duration-200 animate-in fade-in zoom-in-95',
+            'fixed left-1/2 top-1/2 z-50 w-full max-h-[90vh] flex flex-col -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-xl border border-slate-200 duration-200 animate-in fade-in zoom-in-95 overflow-hidden',
             maxWidthMap[maxWidth]
           )}
         >
-          <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-4">
+          <div className="flex items-start justify-between pb-3 border-b border-slate-100 mb-4 shrink-0">
             <div>
               <DialogPrimitive.Title className="text-base font-semibold text-slate-900">
                 {title}
@@ -67,7 +67,9 @@ export const Modal: React.FC<ModalProps> = ({
               <X className="w-4 h-4" />
             </DialogPrimitive.Close>
           </div>
-          {children}
+          <div className="flex-1 overflow-y-auto pr-1">
+            {children}
+          </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

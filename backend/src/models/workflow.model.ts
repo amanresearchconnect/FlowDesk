@@ -3,10 +3,12 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 export type WorkflowNodeType =
   | 'trigger'
   | 'send_message'
+  | 'send_text_message'
   | 'wait_for_reply'
   | 'condition'
   | 'delay'
   | 'verify_data'
+  | 'append_to_sheet'
   | 'update_record'
   | 'ai_conversation'
   | 'human_handoff'
@@ -50,7 +52,7 @@ const workflowBranchSchema = new Schema<IWorkflowBranch>(
       default: 'default'
     },
     conditionValue: { type: String, default: null },
-    targetStepId: { type: String, required: true }
+    targetStepId: { type: String, default: '' }
   },
   { _id: false }
 );
@@ -63,10 +65,12 @@ const workflowNodeSchema = new Schema<IWorkflowNode>(
       enum: [
         'trigger',
         'send_message',
+        'send_text_message',
         'wait_for_reply',
         'condition',
         'delay',
         'verify_data',
+        'append_to_sheet',
         'update_record',
         'ai_conversation',
         'human_handoff',

@@ -7,6 +7,8 @@ const router = Router();
 router.get('/', requireAuth, ConversationsController.listConversations);
 router.get('/:id', requireAuth, ConversationsController.getConversation);
 router.get('/:id/messages', requireAuth, ConversationsController.getMessages);
+router.get('/:id/active-execution', requireAuth, ConversationsController.getActiveExecution);
+router.post('/:id/workflow/start', requireAuth, ConversationsController.startWorkflow);
 router.post('/:id/messages', requireAuth, ConversationsController.sendMessage);
 router.post('/:id/takeover', requireAuth, ConversationsController.takeover);
 router.post('/:id/release-to-bot', requireAuth, ConversationsController.releaseToBot);

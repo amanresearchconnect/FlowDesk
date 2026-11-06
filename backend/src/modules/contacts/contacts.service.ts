@@ -5,7 +5,7 @@ import { SpreadsheetService, SpreadsheetPreview } from '../../services/spreadshe
 import { tempFileStore } from '../../utils/temp-store.js';
 import { normalizePhoneNumber } from '../../utils/phone.js';
 import { ValidationError, NotFoundError } from '../../utils/errors.js';
-import { ImportContactsInput, ListContactsQuery } from './contacts.validator.js';
+import { ImportContactsInput, ListContactsQuery, CreateContactInput, CreateContactListInput } from './contacts.validator.js';
 
 export interface UploadPreviewResult extends SpreadsheetPreview {
   fileToken: string;
@@ -254,6 +254,185 @@ export class ContactsService {
       total,
       page,
       limit
+    };
+  }
+
+  public static async createContact(
+    input: CreateContactInput,
+    _createdById: string
+  ): Promise<ReturnType<IContactDocument['toSafeObject']>> {
+    const phoneResult = normalizePhoneNumber(input.phone, input.countryCode || 'IN');
+    if (!phoneResult.isValid || !phoneResult.e164) {
+      throw new ValidationError(phoneResult.error || 'Invalid phone number format');
+    }
+
+    const e164 = phoneResult.e164;
+    let listObjectId: Types.ObjectId | null = null;
+    if (input.contactListId) {
+      if (!mongoose.isValidObjectId(input.contactListId)) {
+        throw new ValidationError('Invalid contact list ID format');
+      }
+      const listExists = await ContactList.findById(input.contactListId);
+      if (!listExists) {
+        throw new NotFoundError('Target contact list not found');
+      }
+      listObjectId = new Types.ObjectId(input.contactListId);
+    }
+
+    let contact = await Contact.findOne({ phone: e164 });
+    const isNew = !contact;
+
+    if (!contact) {
+      contact = new Contact({
+        phone: e164,
+        firstName: input.firstName || '',
+        lastName: input.lastName || '',
+        email: input.email || undefined,
+        contactListIds: listObjectId ? [listObjectId] : [],
+        tags: input.tags || [],
+        customFields: input.customFields || {},
+        optInStatus: 'opted_in'
+      });
+    } else {
+      if (input.firstName !== undefined) contact.firstName = input.firstName;
+      if (input.lastName !== undefined) contact.lastName = input.lastName;
+      if (input.email !== undefined) contact.email = input.email || undefined;
+      if (input.customFields) {
+        contact.customFields = { ...(contact.customFields || {}), ...input.customFields };
+      }
+      if (input.tags && input.tags.length > 0) {
+        const set = new Set([...contact.tags, ...input.tags]);
+        contact.tags = Array.from(set);
+      }
+      if (listObjectId && !contact.contactListIds.some((id) => id.toString() === listObjectId!.toString())) {
+        contact.contactListIds.push(listObjectId);
+      }
+    }
+
+    await contact.save();
+
+    if (listObjectId && isNew) {
+      await ContactList.updateOne(
+        { _id: listObjectId },
+        { $inc: { totalCount: 1, validCount: 1 } }
+      );
+    }
+
+    return contact.toSafeObject();
+  }
+
+  public static async deleteContact(
+    id: string,
+    contactListId?: string
+  ): Promise<{ success: boolean; message: string; deletedCompletely: boolean }> {
+    if (!mongoose.isValidObjectId(id)) {
+      throw new ValidationError('Invalid contact ID format');
+    }
+
+    const contact = await Contact.findById(id);
+    if (!contact) {
+      throw new NotFoundError('Contact not found');
+    }
+
+    if (contactListId) {
+      if (!mongoose.isValidObjectId(contactListId)) {
+        throw new ValidationError('Invalid contact list ID format');
+      }
+
+      contact.contactListIds = contact.contactListIds.filter(
+        (lId) => lId.toString() !== contactListId
+      );
+
+      await ContactList.updateOne(
+        { _id: new Types.ObjectId(contactListId) },
+        { $inc: { totalCount: -1, validCount: -1 } }
+      );
+
+      if (contact.contactListIds.length === 0) {
+        await contact.deleteOne();
+        return {
+          success: true,
+          message: 'Contact removed from list and deleted permanently',
+          deletedCompletely: true
+        };
+      } else {
+        await contact.save();
+        return {
+          success: true,
+          message: 'Contact removed from list',
+          deletedCompletely: false
+        };
+      }
+    } else {
+      if (contact.contactListIds && contact.contactListIds.length > 0) {
+        await ContactList.updateMany(
+          { _id: { $in: contact.contactListIds } },
+          { $inc: { totalCount: -1, validCount: -1 } }
+        );
+      }
+      await contact.deleteOne();
+      return {
+        success: true,
+        message: 'Contact permanently deleted',
+        deletedCompletely: true
+      };
+    }
+  }
+
+  public static async createContactList(
+    input: CreateContactListInput,
+    createdById: string
+  ): Promise<ReturnType<IContactListDocument['toSafeObject']>> {
+    const userObjectId = mongoose.isValidObjectId(createdById)
+      ? new Types.ObjectId(createdById)
+      : new Types.ObjectId();
+
+    const list = await ContactList.create({
+      name: input.name,
+      description: input.description || '',
+      sourceType: 'manual',
+      totalCount: 0,
+      validCount: 0,
+      duplicateCount: 0,
+      errorCount: 0,
+      createdById: userObjectId
+    });
+
+    return list.toSafeObject();
+  }
+
+  public static async deleteContactList(
+    id: string
+  ): Promise<{ success: boolean; message: string; deletedContactsCount: number }> {
+    if (!mongoose.isValidObjectId(id)) {
+      throw new ValidationError('Invalid contact list ID format');
+    }
+
+    const list = await ContactList.findById(id);
+    if (!list) {
+      throw new NotFoundError('Contact list not found');
+    }
+
+    const listObjectId = new Types.ObjectId(id);
+
+    // Delete contacts whose only list was this one
+    const deleteContactsResult = await Contact.deleteMany({
+      contactListIds: [listObjectId]
+    });
+
+    // Remove list reference from contacts belonging to multiple lists
+    await Contact.updateMany(
+      { contactListIds: listObjectId },
+      { $pull: { contactListIds: listObjectId } }
+    );
+
+    // Delete the ContactList document
+    await list.deleteOne();
+
+    return {
+      success: true,
+      message: `Contact database '${list.name}' and ${deleteContactsResult.deletedCount} associated contacts permanently deleted`,
+      deletedContactsCount: deleteContactsResult.deletedCount
     };
   }
 }

@@ -12,13 +12,17 @@ export class WorkflowsService {
     input: CreateWorkflowInput,
     createdById: string
   ): Promise<ReturnType<IWorkflowDocument['toSafeObject']>> {
+    const userObjectId = mongoose.isValidObjectId(createdById)
+      ? new Types.ObjectId(createdById)
+      : new Types.ObjectId();
+
     const workflow = await Workflow.create({
       name: input.name,
       description: input.description || '',
       version: 1,
-      isPublished: false,
+      isPublished: input.isPublished !== undefined ? input.isPublished : true,
       nodes: input.nodes,
-      createdById: new Types.ObjectId(createdById)
+      createdById: userObjectId
     });
 
     return workflow.toSafeObject();
