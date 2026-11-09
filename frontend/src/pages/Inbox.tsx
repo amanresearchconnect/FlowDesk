@@ -14,7 +14,6 @@ import {
   Phone,
   Calendar,
   MessageSquare,
-  Sliders,
   Workflow as WorkflowIcon,
   Play,
   Pause,
@@ -122,7 +121,6 @@ export const Inbox: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [replyText, setReplyText] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [simulatedReply, setSimulatedReply] = useState('');
   const [workflowData, setWorkflowData] = useState<WorkflowExecutionData | null>(null);
   const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(false);
   const [isActionInProgress, setIsActionInProgress] = useState(false);
@@ -148,9 +146,15 @@ export const Inbox: React.FC = () => {
       const res = await api.get('/conversations', query);
       setConversations(res.data);
 
-      // Auto-select first conversation if none selected
+      // Auto-select first conversation if none selected, or keep selectedConversation synchronized
       if (!selectedConversation && res.data.length > 0) {
         setSelectedConversation(res.data[0]);
+      } else if (selectedConversation) {
+        const selId = selectedConversation.id || (selectedConversation as any)._id;
+        const matching = res.data.find((c: any) => (c.id || c._id) === selId);
+        if (matching) {
+          setSelectedConversation((curr) => (curr ? { ...curr, ...matching } : matching));
+        }
       }
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
@@ -212,11 +216,12 @@ export const Inbox: React.FC = () => {
   // 2. Fetch messages & workflow execution for active conversation
   const fetchMessages = async (convId: string) => {
     try {
-      const res = await api.get(`/conversations/${convId}/messages`);
-      setMessages(res.data);
+      const res = await api.get(`/conversations/${convId}/messages?limit=100`);
+      const fetchedList = Array.isArray(res.data) ? res.data : [];
+      setMessages(fetchedList);
       // Mark read locally
       setConversations((prev) =>
-        prev.map((c) => (c.id === convId ? { ...c, unreadCount: 0 } : c))
+        prev.map((c) => ((c.id || (c as any)._id) === convId ? { ...c, unreadCount: 0 } : c))
       );
     } catch (err) {
       console.error('Failed to fetch messages:', err);
@@ -236,11 +241,16 @@ export const Inbox: React.FC = () => {
   };
 
   useEffect(() => {
-    if (selectedConversation) {
-      fetchMessages(selectedConversation.id);
-      fetchActiveExecution(selectedConversation.id);
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
+    if (convId) {
+      setMessages([]);
+      fetchMessages(convId);
+      fetchActiveExecution(convId);
+    } else {
+      setMessages([]);
+      setWorkflowData(null);
     }
-  }, [selectedConversation?.id]);
+  }, [selectedConversation?.id, (selectedConversation as any)?._id]);
 
   // Auto-scroll messages to bottom
   useEffect(() => {
@@ -300,6 +310,7 @@ export const Inbox: React.FC = () => {
 
     socket.on('message:received', handleMessageReceived);
     socket.on('message:status', handleStatusUpdate);
+    socket.on('message:status_updated', handleStatusUpdate);
     socket.on('conversation:escalated', handleEscalated);
     socket.on('workflow:step_progress', handleWorkflowProgress);
 
@@ -320,6 +331,7 @@ export const Inbox: React.FC = () => {
       clearInterval(pollInterval);
       socket.off('message:received', handleMessageReceived);
       socket.off('message:status', handleStatusUpdate);
+      socket.off('message:status_updated', handleStatusUpdate);
       socket.off('conversation:escalated', handleEscalated);
       socket.off('workflow:step_progress', handleWorkflowProgress);
     };
@@ -328,18 +340,27 @@ export const Inbox: React.FC = () => {
   // 4. Send Agent Reply
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedConversation || !replyText.trim() || isSending) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
+    if (!convId || !replyText.trim() || isSending) return;
 
     setIsSending(true);
     try {
-      const res = await api.post(`/conversations/${selectedConversation.id}/messages`, {
+      const res = await api.post(`/conversations/${convId}/messages`, {
         body: replyText.trim()
       });
 
-      setMessages((prev) => [...prev, res.data]);
+      const newMsg = res.data?.id ? res.data : (res as any)?.message || res.data;
+      if (newMsg && (newMsg.id || newMsg._id)) {
+        setMessages((prev) => {
+          const msgId = newMsg.id || newMsg._id;
+          if (prev.some((m) => (m.id || (m as any)._id) === msgId)) return prev;
+          return [...prev, newMsg];
+        });
+      }
       setReplyText('');
 
-      // Refresh thread
+      // Update local state to human assigned
+      setSelectedConversation((prev: any) => (prev ? { ...prev, status: 'agent_assigned' } : prev));
       fetchConversations();
     } catch (err: any) {
       alert(`Failed to send message: ${err.message}`);
@@ -350,9 +371,10 @@ export const Inbox: React.FC = () => {
 
   // 5. Agent Actions: Takeover, Release, Close
   const handleTakeover = async () => {
-    if (!selectedConversation) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
+    if (!convId) return;
     try {
-      const res = await api.post(`/conversations/${selectedConversation.id}/takeover`);
+      const res = await api.post(`/conversations/${convId}/takeover`);
       setSelectedConversation(res.data);
       fetchConversations();
     } catch (err: any) {
@@ -361,9 +383,10 @@ export const Inbox: React.FC = () => {
   };
 
   const handleReleaseToBot = async () => {
-    if (!selectedConversation) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
+    if (!convId) return;
     try {
-      const res = await api.post(`/conversations/${selectedConversation.id}/release-to-bot`);
+      const res = await api.post(`/conversations/${convId}/release-to-bot`);
       setSelectedConversation(res.data);
       fetchConversations();
     } catch (err: any) {
@@ -372,9 +395,10 @@ export const Inbox: React.FC = () => {
   };
 
   const handleClose = async () => {
-    if (!selectedConversation) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
+    if (!convId) return;
     try {
-      const res = await api.post(`/conversations/${selectedConversation.id}/close`);
+      const res = await api.post(`/conversations/${convId}/close`);
       setSelectedConversation(res.data);
       fetchConversations();
     } catch (err: any) {
@@ -384,7 +408,8 @@ export const Inbox: React.FC = () => {
 
   // Workflow Control Actions
   const handleStartOrRestartWorkflow = async (customStepId?: string) => {
-    if (!selectedConversation) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
+    if (!convId) return;
     const wfId = selectedWorkflowId || workflowData?.workflow?.id || (availableWorkflows[0]?.id || availableWorkflows[0]?._id);
     if (!wfId) {
       alert('Please select a workflow to start.');
@@ -393,12 +418,12 @@ export const Inbox: React.FC = () => {
     const stepToStart = customStepId || selectedStartStepId || undefined;
     setIsActionInProgress(true);
     try {
-      await api.post(`/conversations/${selectedConversation.id}/workflow/start`, {
+      await api.post(`/conversations/${convId}/workflow/start`, {
         workflowId: wfId,
         startStepId: stepToStart
       });
-      await fetchActiveExecution(selectedConversation.id);
-      await fetchMessages(selectedConversation.id);
+      await fetchActiveExecution(convId);
+      await fetchMessages(convId);
       fetchConversations();
     } catch (err: any) {
       alert(`Failed to start workflow: ${err.message}`);
@@ -409,10 +434,11 @@ export const Inbox: React.FC = () => {
 
   const handlePauseWorkflow = async () => {
     if (!workflowData?.execution?.id) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
     setIsActionInProgress(true);
     try {
       await api.post(`/workflows/executions/${workflowData.execution.id}/pause`);
-      fetchActiveExecution(selectedConversation!.id);
+      if (convId) fetchActiveExecution(convId);
       fetchConversations();
     } catch (err: any) {
       alert(`Pause failed: ${err.message}`);
@@ -423,10 +449,11 @@ export const Inbox: React.FC = () => {
 
   const handleResumeWorkflow = async () => {
     if (!workflowData?.execution?.id) return;
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
     setIsActionInProgress(true);
     try {
       await api.post(`/workflows/executions/${workflowData.execution.id}/resume`);
-      fetchActiveExecution(selectedConversation!.id);
+      if (convId) fetchActiveExecution(convId);
       fetchConversations();
     } catch (err: any) {
       alert(`Resume failed: ${err.message}`);
@@ -440,14 +467,17 @@ export const Inbox: React.FC = () => {
       await handleStartOrRestartWorkflow(targetStepId);
       return;
     }
+    const convId = selectedConversation?.id || (selectedConversation as any)?._id;
     setIsActionInProgress(true);
     try {
       await api.post(`/workflows/executions/${workflowData.execution.id}/advance`, {
         targetStepId,
         replyText: replyValue
       });
-      fetchActiveExecution(selectedConversation!.id);
-      fetchMessages(selectedConversation!.id);
+      if (convId) {
+        fetchActiveExecution(convId);
+        fetchMessages(convId);
+      }
       fetchConversations();
     } catch (err: any) {
       alert(`Advance failed: ${err.message}`);
@@ -462,27 +492,6 @@ export const Inbox: React.FC = () => {
       return;
     }
     await handleAdvanceStep(targetStepId, replyValue);
-  };
-
-  // 6. Simulate Inbound Candidate Message (built-in simulator)
-  const handleSimulateInbound = async (textToSend: string) => {
-    if (!selectedConversation?.contactId?.phone) return;
-    try {
-      await api.post('/mock/whatsapp/incoming', {
-        fromPhone: selectedConversation.contactId.phone,
-        text: textToSend
-      });
-      setSimulatedReply('');
-      // Give server 200ms to process AI agent response then refresh
-      setTimeout(() => {
-        if (selectedConversation) {
-          fetchMessages(selectedConversation.id);
-          fetchConversations();
-        }
-      }, 300);
-    } catch (err: any) {
-      alert(`Simulation failed: ${err.message}`);
-    }
   };
 
   const contact = selectedConversation?.contactId;
@@ -573,7 +582,9 @@ export const Inbox: React.FC = () => {
             </div>
           ) : (
             conversations.map((conv) => {
-              const isSelected = selectedConversation?.id === conv.id;
+              const convId = conv.id || (conv as any)._id;
+              const selectedId = selectedConversation?.id || (selectedConversation as any)?._id;
+              const isSelected = selectedId === convId;
               const contactName =
                 `${conv.contactId?.firstName || ''} ${conv.contactId?.lastName || ''}`.trim() ||
                 conv.contactId?.phone ||
@@ -581,7 +592,7 @@ export const Inbox: React.FC = () => {
 
               return (
                 <div
-                  key={conv.id}
+                  key={convId}
                   onClick={() => setSelectedConversation(conv)}
                   className={cn(
                     'p-3 cursor-pointer transition-colors relative',
@@ -646,77 +657,53 @@ export const Inbox: React.FC = () => {
       {selectedConversation ? (
         <div className="flex-1 flex flex-col h-full bg-[#f8fafc] min-w-0 border-r border-slate-200/60">
           {/* Thread Header */}
-          <div className="h-16 px-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0 shadow-xs">
-            <div className="flex items-center gap-3 min-w-0">
+          <div className="h-14 px-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0 shadow-2xs">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div className="relative shrink-0">
-                <div className="w-10 h-10 rounded-full bg-slate-900 text-white font-bold text-sm flex items-center justify-center shadow-xs">
+                <div className="w-8 h-8 rounded-full bg-slate-900 text-white font-bold text-xs flex items-center justify-center shadow-xs">
                   {selectedConversation.contactId?.firstName?.charAt(0) || 'C'}
                 </div>
-                <span className="w-3 h-3 rounded-full bg-emerald-500 border-2 border-white absolute -bottom-0.5 -right-0.5" />
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white absolute -bottom-0.5 -right-0.5" />
               </div>
 
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-slate-900 truncate">
+              <div className="min-w-0 flex flex-col justify-center">
+                <div className="flex items-center gap-2 min-w-0">
+                  <h3 className="text-xs font-bold text-slate-900 truncate max-w-[140px] sm:max-w-[200px]">
                     {`${selectedConversation.contactId?.firstName || ''} ${selectedConversation.contactId?.lastName || ''}`.trim() || 'Candidate'}
                   </h3>
-                  <span className="text-xs text-slate-500 font-mono bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200/60">
+                  <span className="text-[11px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
                     {selectedConversation.contactId?.phone}
                   </span>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                     WhatsApp
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs mt-0.5">
-                  {selectedConversation.status === 'human_needed' && (
-                    <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1">
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      Candidate Requested Human Assistance
-                    </span>
-                  )}
-                  {selectedConversation.status === 'bot' && (
-                    <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
-                      <Cpu className="w-3.5 h-3.5 text-emerald-600" />
-                      Automated Screening Bot Active
-                    </span>
-                  )}
-                  {selectedConversation.status === 'agent_assigned' && (
-                    <span className="text-[11px] font-semibold text-purple-700 flex items-center gap-1">
-                      <UserCheck className="w-3.5 h-3.5 text-purple-600" />
-                      Human Agent Assigned ({selectedConversation.assignedUserId?.name || 'Agent'})
-                    </span>
-                  )}
-                  {selectedConversation.status === 'closed' && (
-                    <span className="text-[11px] font-medium text-slate-400">
-                      Thread Closed
-                    </span>
-                  )}
-                </div>
+                
               </div>
             </div>
 
             {/* Agent Action Controls */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 shrink-0">
               {selectedConversation.status !== 'agent_assigned' ? (
-                <Button size="sm" variant="primary" onClick={handleTakeover} className="gap-1.5">
-                  <UserCheck className="w-3.5 h-3.5" />
-                  Take Over Chat
+                <Button size="sm" variant="primary" onClick={handleTakeover} className="h-7 text-xs gap-1 px-2.5">
+                  <UserCheck className="w-3 h-3" />
+                  Take Over
                 </Button>
               ) : (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={handleReleaseToBot}
-                  className="gap-1.5 text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100"
+                  className="h-7 text-xs gap-1 px-2.5 text-emerald-700 border-emerald-300 bg-emerald-50 hover:bg-emerald-100"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-3 h-3" />
                   Release to Bot
                 </Button>
               )}
 
-              <Button size="sm" variant="secondary" onClick={handleClose}>
+              <Button size="sm" variant="secondary" onClick={handleClose} className="h-7 text-xs px-2.5">
                 Close
               </Button>
             </div>
@@ -822,85 +809,6 @@ export const Inbox: React.FC = () => {
               );
             })}
             <div ref={messagesEndRef} />
-          </div>
-
-          {/* Workflow Interrupted / On-Hold Notice Banner */}
-          {(selectedConversation.status === 'agent_assigned' || workflowData?.execution?.status === 'paused_for_human') && (
-            <div className="mx-4 my-2 p-2.5 bg-amber-50/90 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between gap-3 shadow-2xs shrink-0">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                <div>
-                  <span className="font-semibold block text-amber-950">Workflow Automation Interrupted / On Hold</span>
-                  <span className="text-[11px] text-amber-700">An agent intervened. Automated WhatsApp replies are paused until resumed.</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Button
-                  size="sm"
-                  variant="primary"
-                  className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 gap-1"
-                  onClick={handleResumeWorkflow}
-                  disabled={isActionInProgress}
-                >
-                  <Play className="w-3 h-3" /> Resume Bot
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs border-amber-300 text-amber-800 bg-white hover:bg-amber-50 gap-1"
-                  onClick={() => handleStartOrRestartWorkflow()}
-                  disabled={isActionInProgress}
-                >
-                  <RotateCw className="w-3 h-3" /> Restart Flow
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Quick Simulation Toolbar (Instant Recruiter & Candidate Testing) */}
-          <div className="px-4 py-2 bg-slate-200/70 border-t border-slate-300/80 flex items-center justify-between text-xs text-slate-600 shrink-0">
-            <span className="font-semibold text-slate-700 flex items-center gap-1.5 text-xs">
-              <Sliders className="w-3.5 h-3.5 text-emerald-600" />
-              Candidate Quick Replies:
-            </span>
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              <button
-                onClick={() => handleSimulateInbound('YES')}
-                className="px-2.5 py-0.5 bg-white hover:bg-slate-50 rounded-md border border-slate-300 font-mono text-[11px] font-semibold text-emerald-800 transition-colors"
-              >
-                "YES"
-              </button>
-              <button
-                onClick={() => handleSimulateInbound('NO')}
-                className="px-2.5 py-0.5 bg-white hover:bg-slate-50 rounded-md border border-slate-300 font-mono text-[11px] font-semibold text-rose-700 transition-colors"
-              >
-                "NO"
-              </button>
-              <button
-                onClick={() => handleSimulateInbound('3-5 Years')}
-                className="px-2.5 py-0.5 bg-white hover:bg-slate-50 rounded-md border border-slate-300 text-[11px] font-medium transition-colors"
-              >
-                "3-5 Years"
-              </button>
-              <button
-                onClick={() => handleSimulateInbound('Immediate (< 15 days)')}
-                className="px-2.5 py-0.5 bg-white hover:bg-slate-50 rounded-md border border-slate-300 text-[11px] font-medium transition-colors"
-              >
-                "Immediate"
-              </button>
-              <button
-                onClick={() => handleSimulateInbound('What is the role location?')}
-                className="px-2.5 py-0.5 bg-white hover:bg-slate-50 rounded-md border border-slate-300 text-[11px] transition-colors"
-              >
-                "Role Location?"
-              </button>
-              <button
-                onClick={() => handleSimulateInbound('I need to speak to a human recruiter')}
-                className="px-2.5 py-0.5 bg-white hover:bg-slate-50 rounded-md border border-slate-300 text-amber-700 text-[11px] font-medium transition-colors"
-              >
-                "Need Human"
-              </button>
-            </div>
           </div>
 
           {/* Message Input Box */}

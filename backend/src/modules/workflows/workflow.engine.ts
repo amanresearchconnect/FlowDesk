@@ -170,7 +170,7 @@ export class WorkflowEngine {
         }
 
         const messageType = buttons && buttons.length > 0 ? 'interactive' : 'text';
-        await Message.create({
+        const messageDoc = await Message.create({
           conversationId: conversation._id,
           contactId: contact._id,
           campaignId: execution.campaignId,
@@ -188,12 +188,20 @@ export class WorkflowEngine {
           sentAt: sendResult.timestamp
         });
 
-        // When interactive buttons are dispatched, clear any previous reply variable
-        // so succeeding condition nodes pause and wait for a fresh candidate response
-        if (buttons && buttons.length > 0) {
-          execution.variables.lastReply = null;
-          execution.markModified('variables');
-        }
+        // Broadcast real-time outbound bot message to active chat and team inbox
+        const safeMessage = messageDoc.toSafeObject();
+        emitToConversation(conversation._id.toString(), 'message:received', safeMessage);
+        emitToTeam('message:received', {
+          conversationId: conversation._id.toString(),
+          message: safeMessage,
+          contact: contact.toSafeObject()
+        });
+
+        // Whenever ANY outbound message is dispatched (interactive or text),
+        // clear previous reply variable so succeeding condition / wait nodes pause
+        // and wait for a fresh candidate response to this new message!
+        execution.variables.lastReply = null;
+        execution.markModified('variables');
 
         this.logStep(execution, node, 'completed', { messageBody }, { providerMessageId: sendResult.providerMessageId });
         await execution.save();
@@ -253,8 +261,8 @@ export class WorkflowEngine {
         }
 
         const nextStep = matched
-          ? (node.config.trueStepId || node.branches?.[0]?.targetStepId)
-          : (node.config.falseStepId || node.branches?.[1]?.targetStepId);
+          ? (node.branches?.[0]?.targetStepId || node.config.trueStepId)
+          : (node.branches?.[1]?.targetStepId || node.config.falseStepId);
         this.logStep(execution, node, 'completed', { actualValue, operator, expectedValue }, { matched, nextStep });
         await execution.save();
 
@@ -293,18 +301,45 @@ export class WorkflowEngine {
           return;
         }
 
+        const lastReplyText = String(execution.variables?.lastReply || '').trim();
+
+        // 1. Extract candidate tokens if candidate replied with formatted details
+        let extractedEmail: string | undefined;
+        let extractedPhone: string | undefined;
+        let extractedSurveyId: string | undefined;
+
+        if (lastReplyText) {
+          const emailMatch = lastReplyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          if (emailMatch) extractedEmail = emailMatch[0].trim();
+
+          const phoneMatch = lastReplyText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\b\d{10,14}\b/);
+          if (phoneMatch) extractedPhone = phoneMatch[0].trim();
+
+          const surveyMatch =
+            lastReplyText.match(/(?:survey[-_\s]?id|surveyid|id|code)[:\s#]*([a-zA-Z0-9-_]+)/i) ||
+            lastReplyText.match(/\b(surv[-_]?[a-zA-Z0-9]+)\b/i) ||
+            lastReplyText.match(/\b([A-Z]{2,}[-_][a-zA-Z0-9]+)\b/i);
+          if (surveyMatch) extractedSurveyId = (surveyMatch[1] || surveyMatch[0]).trim();
+        }
+
         const surveyId =
           interpolateTemplate(node.config?.query?.surveyId || '', {
             ...contact.toObject(),
             ...execution.variables
-          }) || execution.variables?.candidateSurveyId || execution.variables?.lastReply;
+          }) || extractedSurveyId || execution.variables?.candidateSurveyId;
 
         const providerName = node.config?.integrationType;
+        const sheetName = node.config?.sheetName;
+        const spreadsheetUrl = node.config?.spreadsheetUrl || node.config?.spreadsheetId;
 
         const verifyResult = await VerificationService.verifyCandidateSubmission({
-          phone: contact.phone,
+          phone: extractedPhone || contact.phone,
           surveyId: surveyId ? String(surveyId).trim() : undefined,
-          providerName
+          email: extractedEmail || (contact as any).email,
+          sheetName,
+          spreadsheetUrl,
+          providerName,
+          skipCache: true
         });
 
         const resultVarName = node.config?.resultVariable || 'surveyVerified';
@@ -314,7 +349,13 @@ export class WorkflowEngine {
         }
 
         execution.markModified('variables');
-        this.logStep(execution, node, 'completed', { query: { phone: contact.phone, surveyId } }, verifyResult);
+        this.logStep(
+          execution,
+          node,
+          'completed',
+          { query: { phone: extractedPhone || contact.phone, surveyId, email: extractedEmail } },
+          verifyResult
+        );
         await execution.save();
 
         const targetStep = verifyResult.verified
@@ -331,23 +372,90 @@ export class WorkflowEngine {
         const contact = await Contact.findById(execution.contactId);
         const sheetName = node.config?.sheetName || 'Responses';
         const providerName = node.config?.integrationType;
+        const spreadsheetUrl = node.config?.spreadsheetUrl || node.config?.spreadsheetId;
 
         const contactObj = contact ? (contact.toObject() as any) : {};
-        const rowValues = [
-          contact ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Candidate' : 'Candidate',
-          contact?.phone || '',
-          contactObj.roleApplied || contactObj.customAttributes?.role || execution.variables?.role || 'Applicant',
-          execution.variables?.surveyVerified ? 'VERIFIED' : 'PASSED_SCREENING',
-          new Date().toISOString()
-        ];
+        const lastReplyText = String(execution.variables?.lastReply || '').trim();
+
+        // 1. Extract details from candidate reply (supports label-style or comma-separated tokens)
+        const extracted: Record<string, string> = {};
+        if (lastReplyText) {
+          const emailMatch = lastReplyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          if (emailMatch) extracted.email = emailMatch[0].trim();
+
+          const phoneMatch = lastReplyText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\b\d{10,13}\b/);
+          if (phoneMatch) extracted.phone = phoneMatch[0].trim();
+
+          const surveyMatch =
+            lastReplyText.match(/(?:survey[-_\s]?id|surveyid|id|code)[:\s#]*([a-zA-Z0-9-_]+)/i) ||
+            lastReplyText.match(/\b(surv[-_]?[a-zA-Z0-9]+)\b/i) ||
+            lastReplyText.match(/\b([A-Z]{2,}[-_][a-zA-Z0-9]+)\b/i);
+          if (surveyMatch) extracted.surveyId = (surveyMatch[1] || surveyMatch[0]).trim();
+
+          const nameLabelMatch = lastReplyText.match(/(?:name)[:\s]+([a-zA-Z\s]{2,30})/i);
+          if (nameLabelMatch) {
+            extracted.name = nameLabelMatch[1].trim();
+          } else if (lastReplyText.includes(',')) {
+            const tokens = lastReplyText.split(',').map((t) => t.trim());
+            for (const token of tokens) {
+              if (extracted.email && token.includes(extracted.email)) continue;
+              if (extracted.phone && token.includes(extracted.phone)) continue;
+              if (extracted.surveyId && token.includes(extracted.surveyId)) continue;
+              if (/^[a-zA-Z\s]{2,40}$/.test(token)) {
+                extracted.name = token;
+                break;
+              }
+            }
+          }
+        }
+
+        // 2. Persist extracted candidate details into execution variables
+        if (extracted.surveyId) execution.variables.candidateSurveyId = extracted.surveyId;
+        if (extracted.email) execution.variables.candidateEmail = extracted.email;
+        if (extracted.phone) execution.variables.candidatePhone = extracted.phone;
+        if (extracted.name) execution.variables.candidateName = extracted.name;
+        execution.markModified('variables');
+
+        const surveyData = extracted.surveyId || execution.variables?.surveyDetails || lastReplyText || contactObj.roleApplied || 'Survey Completed';
+        const customFields = {
+          ...(contactObj.customFields || {}),
+          ...extracted,
+          surveyData,
+          surveyDetails: surveyData,
+          lastReply: lastReplyText,
+          ...execution.variables
+        };
+
+        const rawCols = node.config?.customColumns;
+        const customColumnsList: string[] = Array.isArray(rawCols)
+          ? rawCols
+          : typeof rawCols === 'string'
+          ? rawCols.split(',').map((s: string) => s.trim()).filter(Boolean)
+          : [];
+
+        const rowValues = customColumnsList.length > 0
+          ? customColumnsList.map((colTemplate: string) =>
+              interpolateTemplate(colTemplate, {
+                ...contactObj,
+                customFields
+              })
+            )
+          : [
+              extracted.name || (contact ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Contact' : 'Contact'),
+              extracted.phone || contact?.phone || '',
+              extracted.email || contact?.email || '',
+              surveyData,
+              new Date().toISOString()
+            ];
 
         try {
           await VerificationService.appendRowToSheet({
             sheetName,
             rowValues,
+            spreadsheetUrl,
             providerName
           });
-          this.logStep(execution, node, 'completed', { sheetName, rowValues });
+          this.logStep(execution, node, 'completed', { sheetName, rowValues, spreadsheetUrl });
         } catch (err: any) {
           logger.warn('Failed to append row to spreadsheet', { error: err.message });
           this.logStep(execution, node, 'failed', { sheetName, error: err.message });
@@ -518,9 +626,13 @@ export class WorkflowEngine {
       }
     }
 
-    // Fallback to default branch if none matched
-    if (!targetStepId && defaultBranch) {
-      targetStepId = defaultBranch.targetStepId;
+    // Fallback to default branch, or if there is only 1 branch, advance down that branch
+    if (!targetStepId) {
+      if (defaultBranch) {
+        targetStepId = defaultBranch.targetStepId;
+      } else if (branchSourceNode.branches.length === 1 && branchSourceNode.branches[0].targetStepId) {
+        targetStepId = branchSourceNode.branches[0].targetStepId;
+      }
     }
 
     if (!targetStepId) {

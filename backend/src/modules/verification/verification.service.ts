@@ -9,8 +9,26 @@ import { getRedisClient } from '../../config/redis.js';
 import { normalizePhoneNumber } from '../../utils/phone.js';
 import { logger } from '../../utils/logger.js';
 
+/**
+ * Extracts Google Spreadsheet ID from either a full URL or raw ID
+ * e.g. https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFM.../edit -> 1BxiMVs0XRA5nFM...
+ */
+export function extractSpreadsheetId(urlOrId?: string): string | undefined {
+  if (!urlOrId || !urlOrId.trim()) return undefined;
+  const trimmed = urlOrId.trim();
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  if (!trimmed.includes('/') && trimmed.length >= 10) {
+    return trimmed;
+  }
+  return trimmed;
+}
+
 export interface VerifyCandidateOptions extends IVerificationQuery {
   providerName?: string;
+  spreadsheetUrl?: string;
   skipCache?: boolean;
 }
 
@@ -23,7 +41,8 @@ export class VerificationService {
     const norm = normalizePhoneNumber(options.phone);
     const searchPhone = norm.isValid && norm.e164 ? norm.e164 : options.phone;
     const provider = getVerificationProvider(options.providerName);
-    const cacheKey = `verify:${provider.name}:${searchPhone}:${options.surveyId || 'any'}`;
+    const targetSpreadsheetId = extractSpreadsheetId(options.spreadsheetUrl || options.spreadsheetId);
+    const cacheKey = `verify:${provider.name}:${searchPhone}:${options.surveyId || 'any'}:${targetSpreadsheetId || 'default'}`;
 
     // 1. Check Redis Cache
     if (!options.skipCache) {
@@ -55,7 +74,8 @@ export class VerificationService {
     const result = await provider.verifySubmission({
       phone: searchPhone,
       surveyId: options.surveyId,
-      sheetName: options.sheetName
+      sheetName: options.sheetName,
+      spreadsheetId: targetSpreadsheetId
     });
 
     // 3. Cache result in Redis for 60 seconds
@@ -94,11 +114,19 @@ export class VerificationService {
   public static async appendRowToSheet(options: {
     sheetName?: string;
     rowValues: any[];
+    spreadsheetId?: string;
+    spreadsheetUrl?: string;
     providerName?: string;
   }): Promise<{ success: boolean; rowNumber?: number }> {
     const provider = getVerificationProvider(options.providerName) as any;
+    const targetSpreadsheetId = extractSpreadsheetId(options.spreadsheetUrl || options.spreadsheetId);
     if (typeof provider.appendRow === 'function') {
-      return provider.appendRow(options.sheetName || 'Responses', options.rowValues);
+      return provider.appendRow(
+        options.sheetName || 'Responses',
+        options.rowValues,
+        targetSpreadsheetId,
+        options.spreadsheetUrl || options.spreadsheetId
+      );
     }
     return { success: true };
   }

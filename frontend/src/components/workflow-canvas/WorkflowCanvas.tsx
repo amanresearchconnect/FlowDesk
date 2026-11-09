@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -7,12 +7,17 @@ import {
   applyNodeChanges,
   applyEdgeChanges,
   addEdge,
+  reconnectEdge,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Node,
   Edge,
   Connection,
   NodeChange,
   EdgeChange,
-  MarkerType
+  MarkerType,
+  type EdgeProps
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -49,6 +54,91 @@ interface WorkflowCanvasProps {
   onTriggerTest: () => void;
   isSaving?: boolean;
 }
+
+// Interactive edge with hover/click delete pill and selected state
+export const RemovableEdge: React.FC<EdgeProps> = ({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  selected,
+  label
+}) => {
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition
+  });
+
+  const baseStroke = (style.stroke as string) || '#059669';
+
+  return (
+    <>
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          stroke: selected ? '#ef4444' : baseStroke,
+          strokeWidth: selected ? 3.5 : (style.strokeWidth as number) || 2,
+          transition: 'stroke 0.2s, stroke-width 0.2s'
+        }}
+      />
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all'
+          }}
+          className="nodrag nopan flex items-center gap-1 z-20 group"
+        >
+          {label && (
+            <span
+              className="text-[10px] font-bold px-1.5 py-0.5 rounded shadow-xs select-none"
+              style={{
+                backgroundColor: '#ffffff',
+                border: selected ? '1.5px solid #ef4444' : '1px solid #e2e8f0',
+                color: selected ? '#ef4444' : baseStroke
+              }}
+            >
+              {label}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent('flowdesk:delete-edge', { detail: { id } }));
+            }}
+            title="Click to disconnect / delete connection"
+            className={`w-5 h-5 rounded-full bg-white border flex items-center justify-center text-xs font-bold shadow-xs transition-all hover:scale-125 cursor-pointer ${
+              selected
+                ? 'border-rose-500 bg-rose-50 text-rose-600 scale-110 opacity-100'
+                : 'border-slate-300 text-slate-400 hover:border-rose-500 hover:bg-rose-50 hover:text-rose-600 opacity-60 hover:opacity-100'
+            }`}
+          >
+            ×
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+};
+
+const edgeTypes = {
+  smoothstep: RemovableEdge,
+  default: RemovableEdge,
+  removable: RemovableEdge
+};
 
 // Convert FlowDesk linear / branched nodes into React Flow layout nodes & edges
 const convertWorkflowToGraph = (nodes: any[] = []): { nodes: Node[]; edges: Edge[] } => {
@@ -156,7 +246,10 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   const [nodes, setNodes] = useState<Node[]>(initialGraph.nodes);
   const [edges, setEdges] = useState<Edge[]>(initialGraph.edges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const edgeReconnectSuccessful = useRef(true);
 
   // Sync if external workflow changes
   useEffect(() => {
@@ -164,7 +257,21 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     setNodes(graph.nodes);
     setEdges(graph.edges);
     setSelectedNode(null);
+    setSelectedEdge(null);
   }, [workflow]);
+
+  // Listen for delete button clicks rendered on edge pills
+  useEffect(() => {
+    const handleDeleteEdge = (e: any) => {
+      const edgeId = e.detail?.id;
+      if (edgeId) {
+        setEdges((eds) => eds.filter((edge) => edge.id !== edgeId));
+        setSelectedEdge((curr) => (curr && curr.id === edgeId ? null : curr));
+      }
+    };
+    window.addEventListener('flowdesk:delete-edge', handleDeleteEdge);
+    return () => window.removeEventListener('flowdesk:delete-edge', handleDeleteEdge);
+  }, []);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -181,9 +288,33 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   );
 
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    (changes: EdgeChange[]) => {
+      const removedEdgeIds = changes.filter((c) => c.type === 'remove').map((c: any) => c.id);
+      if (removedEdgeIds.length > 0) {
+        setSelectedEdge((curr) => (curr && removedEdgeIds.includes(curr.id) ? null : curr));
+      }
+      setEdges((eds) => applyEdgeChanges(changes, eds));
+    },
     []
   );
+
+  // Edge Reconnection: Drag arrow endpoint off socket to disconnect or re-link to another node
+  const onReconnectStart = useCallback(() => {
+    edgeReconnectSuccessful.current = false;
+  }, []);
+
+  const onReconnect = useCallback((oldEdge: Edge, newConnection: Connection) => {
+    edgeReconnectSuccessful.current = true;
+    setEdges((els) => reconnectEdge(oldEdge, newConnection, els));
+  }, []);
+
+  const onReconnectEnd = useCallback((_: any, edge: Edge) => {
+    if (!edgeReconnectSuccessful.current) {
+      setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+      setSelectedEdge((curr) => (curr && curr.id === edge.id ? null : curr));
+    }
+    edgeReconnectSuccessful.current = true;
+  }, []);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -191,7 +322,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         addEdge(
           {
             ...params,
-            type: 'smoothstep',
+            type: 'removable',
             animated: true,
             style: { stroke: '#059669', strokeWidth: 2 },
             markerEnd: { type: MarkerType.ArrowClosed, color: '#059669' }
@@ -205,6 +336,17 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
+    setSelectedEdge(null);
+  };
+
+  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
+    setSelectedEdge(edge);
+    setSelectedNode(null);
+  };
+
+  const onPaneClick = () => {
+    setSelectedNode(null);
+    setSelectedEdge(null);
   };
 
   const handleUpdateSelectedNode = (updatedData: Partial<WorkflowNodeData>) => {
@@ -286,6 +428,15 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     const reconstructedNodes = nodes.map((node) => {
       const outgoingEdges = edges.filter((e) => e.source === node.id);
 
+      const nodeConfig = { ...((node.data as any).config || {}) };
+      delete nodeConfig.tagsRaw;
+      delete nodeConfig.keywordsRaw;
+      delete nodeConfig.customColumnsRaw;
+      if (typeof nodeConfig.customColumns === 'string') {
+        const parsed = nodeConfig.customColumns.split(',').map((s: string) => s.trim()).filter(Boolean);
+        nodeConfig.customColumns = parsed.length > 0 ? parsed : undefined;
+      }
+
       let nextStepId: string | null = null;
       const branches: any[] = [];
 
@@ -299,12 +450,14 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             conditionValue: configuredYes,
             targetStepId: edge.target
           });
+          nodeConfig.trueStepId = edge.target;
         } else if (edge.sourceHandle === 'no') {
           branches.push({
             conditionType: 'equals',
             conditionValue: configuredNo,
             targetStepId: edge.target
           });
+          nodeConfig.falseStepId = edge.target;
         } else if (edge.label && typeof edge.label === 'string') {
           branches.push({
             conditionType: 'equals',
@@ -325,7 +478,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         name: (node.data as any).name || 'Step',
         type: (node.data as any).type || node.type,
         config: {
-          ...((node.data as any).config || {}),
+          ...nodeConfig,
           _position: node.position
         },
         nextStepId: nextStepId || (node.data as any).nextStepId || null,
@@ -539,8 +692,15 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onReconnect={onReconnect}
+            onReconnectStart={onReconnectStart}
+            onReconnectEnd={onReconnectEnd}
+            edgesReconnectable={true}
             onNodeClick={onNodeClick}
+            onEdgeClick={onEdgeClick}
+            onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             deleteKeyCode={['Backspace', 'Delete']}
             fitView
             fitViewOptions={{ padding: 0.2 }}
@@ -854,6 +1014,23 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               {selectedNode.type === 'verify_data' && (
                 <div className="space-y-3 pt-2 text-xs">
                   <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700">Google Sheet URL or ID</label>
+                    <input
+                      type="text"
+                      placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                      value={(selectedNode.data as any).config?.spreadsheetUrl || ''}
+                      onChange={(e) => {
+                        handleUpdateSelectedNode({
+                          config: { ...(selectedNode.data as any).config, spreadsheetUrl: e.target.value }
+                        });
+                      }}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Paste the Google Sheets link directly. Leave empty for default/mock.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-xs font-semibold text-slate-700">Integration Provider</label>
                     <select
                       value={(selectedNode.data as any).config?.provider || 'google_sheets'}
@@ -908,6 +1085,23 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               {selectedNode.type === 'append_to_sheet' && (
                 <div className="space-y-3 pt-2 text-xs">
                   <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700">Google Sheet URL or ID</label>
+                    <input
+                      type="text"
+                      placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                      value={(selectedNode.data as any).config?.spreadsheetUrl || ''}
+                      onChange={(e) => {
+                        handleUpdateSelectedNode({
+                          config: { ...(selectedNode.data as any).config, spreadsheetUrl: e.target.value }
+                        });
+                      }}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Paste the Google Sheets link directly. Leave empty for default/mock.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-xs font-semibold text-slate-700">Integration Provider</label>
                     <select
                       value={(selectedNode.data as any).config?.integrationType || 'google_sheets'}
@@ -935,12 +1129,46 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700">Custom Columns Mapping (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="{{Name}}, {{Phone}}, {{Email}}, {{Survey-ID}}"
+                      value={
+                        (selectedNode.data as any).config?.customColumnsRaw !== undefined
+                          ? (selectedNode.data as any).config.customColumnsRaw
+                          : Array.isArray((selectedNode.data as any).config?.customColumns)
+                          ? (selectedNode.data as any).config.customColumns.join(', ')
+                          : (selectedNode.data as any).config?.customColumns || ''
+                      }
+                      onChange={(e) => {
+                        const customColumnsRaw = e.target.value;
+                        const cols = customColumnsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+                        handleUpdateSelectedNode({
+                          config: {
+                            ...(selectedNode.data as any).config,
+                            customColumns: cols.length > 0 ? cols : undefined,
+                            customColumnsRaw
+                          }
+                        });
+                      }}
+                      onBlur={() => {
+                        const cfg = { ...(selectedNode.data as any).config };
+                        delete cfg.customColumnsRaw;
+                        handleUpdateSelectedNode({ config: cfg });
+                      }}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Comma-separated column values. Defaults to [Name, Phone, Survey Answers, Status, Timestamp].
+                    </p>
+                  </div>
                   <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-800 space-y-1">
                     <p className="font-bold flex items-center gap-1">
                       <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
                       Live Spreadsheet Writing
                     </p>
-                    <p>Appends candidate row: [Name, Phone, Role, Status, Verified Timestamp].</p>
+                    <p>Appends candidate row: [Name, Phone, Survey Answers, Status, Verified Timestamp].</p>
                   </div>
                 </div>
               )}
@@ -953,17 +1181,25 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                     type="text"
                     placeholder="interested, screened, interview_ready"
                     value={
-                      ((selectedNode.data as any).config?.operations || [])
-                        .filter((op: any) => op.action === 'add_tag')
-                        .map((op: any) => op.value)
-                        .join(', ') || ''
+                      (selectedNode.data as any).config?.tagsRaw !== undefined
+                        ? (selectedNode.data as any).config.tagsRaw
+                        : ((selectedNode.data as any).config?.operations || [])
+                            .filter((op: any) => op.action === 'add_tag')
+                            .map((op: any) => op.value)
+                            .join(', ') || ''
                     }
                     onChange={(e) => {
-                      const tags = e.target.value.split(',').map((t) => t.trim()).filter(Boolean);
+                      const tagsRaw = e.target.value;
+                      const tags = tagsRaw.split(',').map((t) => t.trim()).filter(Boolean);
                       const ops = tags.map((t) => ({ action: 'add_tag', value: t }));
                       handleUpdateSelectedNode({
-                        config: { ...(selectedNode.data as any).config, operations: ops }
+                        config: { ...(selectedNode.data as any).config, operations: ops, tagsRaw }
                       });
+                    }}
+                    onBlur={() => {
+                      const cfg = { ...(selectedNode.data as any).config };
+                      delete cfg.tagsRaw;
+                      handleUpdateSelectedNode({ config: cfg });
                     }}
                     className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
@@ -978,12 +1214,22 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                   <input
                     type="text"
                     placeholder="APPLY, HI, JOB"
-                    value={((selectedNode.data as any).config?.keywords || []).join(', ')}
+                    value={
+                      (selectedNode.data as any).config?.keywordsRaw !== undefined
+                        ? (selectedNode.data as any).config.keywordsRaw
+                        : ((selectedNode.data as any).config?.keywords || []).join(', ')
+                    }
                     onChange={(e) => {
-                      const kw = e.target.value.split(',').map((k) => k.trim()).filter(Boolean);
+                      const keywordsRaw = e.target.value;
+                      const kw = keywordsRaw.split(',').map((k) => k.trim()).filter(Boolean);
                       handleUpdateSelectedNode({
-                        config: { ...(selectedNode.data as any).config, keywords: kw }
+                        config: { ...(selectedNode.data as any).config, keywords: kw, keywordsRaw }
                       });
+                    }}
+                    onBlur={() => {
+                      const cfg = { ...(selectedNode.data as any).config };
+                      delete cfg.keywordsRaw;
+                      handleUpdateSelectedNode({ config: cfg });
                     }}
                     className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
                   />
@@ -1023,6 +1269,82 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               </Button>
               <p className="text-[10px] text-center text-slate-400">
                 Changes apply instantly · Click <strong>Save Workflow</strong> above to persist.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Right Drawer: Connection / Edge Inspector */}
+        {selectedEdge && !selectedNode && (
+          <div className="w-80 md:w-96 shrink-0 bg-white border-l border-slate-200 z-20 flex flex-col h-full shadow-2xl animate-fade-in min-h-0 overflow-hidden">
+            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-rose-600">
+                  Connection Inspector
+                </span>
+                <h3 className="text-sm font-bold text-slate-900 truncate max-w-[210px]">
+                  {selectedEdge.label ? String(selectedEdge.label) : 'Step Connection'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedEdge(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                title="Close Inspector"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5 text-xs">
+                <div>
+                  <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-wider">From Source Step</span>
+                  <span className="font-bold text-slate-800 text-sm block mt-0.5">
+                    {String((nodes.find((n) => n.id === selectedEdge.source)?.data as any)?.name || selectedEdge.source)}
+                  </span>
+                </div>
+                <div className="pt-2 border-t border-slate-200">
+                  <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-wider">To Target Step</span>
+                  <span className="font-bold text-slate-800 text-sm block mt-0.5">
+                    {String((nodes.find((n) => n.id === selectedEdge.target)?.data as any)?.name || selectedEdge.target)}
+                  </span>
+                </div>
+                {selectedEdge.label && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <span className="text-slate-400 text-[10px] block uppercase font-bold tracking-wider">Branch Condition</span>
+                    <Badge variant="slate" className="mt-1 font-semibold text-slate-700 border-slate-300">
+                      {String(selectedEdge.label)}
+                    </Badge>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-[11px] text-amber-900 space-y-1.5">
+                <span className="font-bold flex items-center gap-1.5 text-amber-950">
+                  <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                  3 Ways to Disconnect
+                </span>
+                <p>• Click the <strong>Disconnect</strong> button below.</p>
+                <p>• Click the small <strong>×</strong> pill directly on the connector line.</p>
+                <p>• Drag the arrow endpoint off the target node socket into empty space.</p>
+              </div>
+            </div>
+
+            <div className="shrink-0 p-3 bg-slate-50 border-t border-slate-200 space-y-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEdges((eds) => eds.filter((e) => e.id !== selectedEdge.id));
+                  setSelectedEdge(null);
+                }}
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-rose-600 border-rose-200 hover:bg-rose-50 hover:border-rose-300 font-semibold py-2 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Disconnect / Delete Connection
+              </Button>
+              <p className="text-[10px] text-center text-slate-400">
+                You can immediately draw a new connection to any other node.
               </p>
             </div>
           </div>

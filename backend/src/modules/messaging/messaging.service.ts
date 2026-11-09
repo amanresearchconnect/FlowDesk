@@ -85,11 +85,15 @@ export class MessagingService {
 
     // Broadcast status update via Socket.IO
     if (message.conversationId) {
-      emitToConversation(message.conversationId.toString(), 'message:status_updated', {
+      const statusPayload = {
         messageId: message._id.toString(),
         providerMessageId,
-        status
-      });
+        status,
+        conversationId: message.conversationId.toString()
+      };
+      emitToConversation(message.conversationId.toString(), 'message:status_updated', statusPayload);
+      emitToConversation(message.conversationId.toString(), 'message:status', statusPayload);
+      emitToTeam('message:status', statusPayload);
     }
 
     return message;
@@ -193,25 +197,43 @@ export class MessagingService {
       }
     }
 
-    // Trigger workflow engine if contact is waiting for reply
-    const workflowResult = await WorkflowEngine.handleContactReply(contact._id, text.trim());
+    // Check fresh conversation status before triggering any automated reply
+    const freshConv = await Conversation.findById(conversation._id);
+
+    // If an agent has intervened or taken over, DO NOT auto-reply with bot or AI!
+    if (freshConv && (freshConv.status === 'agent_assigned' || freshConv.status === 'closed')) {
+      logger.info('Conversation is assigned to human agent or closed, skipping bot & AI auto-replies', {
+        conversationId: freshConv._id.toString(),
+        phone,
+        status: freshConv.status
+      });
+      return {
+        message: message.toSafeObject(),
+        contact: contact.toSafeObject(),
+        campaignId: campaignId?.toString()
+      };
+    }
+
+    // Trigger workflow engine ONLY if conversation is bot-managed
+    let workflowHandled = false;
+    if (freshConv && freshConv.status === 'bot') {
+      const workflowResult = await WorkflowEngine.handleContactReply(contact._id, text.trim());
+      workflowHandled = workflowResult.handled;
+    }
 
     // If workflow did not consume this message and conversation is bot-managed, pass to AI Agent
-    if (!workflowResult.handled) {
-      const freshConv = await Conversation.findById(conversation._id);
-      if (freshConv && freshConv.status === 'bot') {
-        try {
-          await AIAgentService.handleCandidateMessage({
-            conversationId: freshConv._id,
-            contactId: contact._id,
-            text: text.trim()
-          });
-        } catch (aiErr: any) {
-          logger.error('Error during AI Agent message handling', {
-            conversationId: freshConv._id.toString(),
-            error: aiErr.message
-          });
-        }
+    if (!workflowHandled && freshConv && freshConv.status === 'bot') {
+      try {
+        await AIAgentService.handleCandidateMessage({
+          conversationId: freshConv._id,
+          contactId: contact._id,
+          text: text.trim()
+        });
+      } catch (aiErr: any) {
+        logger.error('Error during AI Agent message handling', {
+          conversationId: freshConv._id.toString(),
+          error: aiErr.message
+        });
       }
     }
 

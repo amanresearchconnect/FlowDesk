@@ -5,6 +5,7 @@ import { Contact } from '../../models/contact.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
+import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { interpolateTemplate } from '../../utils/template.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -160,7 +161,7 @@ export class CampaignsService {
           }
 
           const messageType = buttons && buttons.length > 0 ? 'interactive' : 'text';
-          await Message.create({
+          const msgDoc = await Message.create({
             conversationId: conversation._id,
             contactId: contact._id,
             campaignId: campaign._id,
@@ -175,6 +176,14 @@ export class CampaignsService {
             },
             status: sendResult.status,
             sentAt: sendResult.timestamp
+          });
+
+          const safeMessage = msgDoc.toSafeObject();
+          emitToConversation(conversation._id.toString(), 'message:received', safeMessage);
+          emitToTeam('message:received', {
+            conversationId: conversation._id.toString(),
+            message: safeMessage,
+            contact: contact.toSafeObject()
           });
 
           dispatchedCount++;

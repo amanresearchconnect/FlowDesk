@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { env } from '../../config/env.js';
 import { metaWhatsAppProvider } from '../../providers/messaging/meta-whatsapp.provider.js';
 import { MessagingService } from '../messaging/messaging.service.js';
+import { Message } from '../../models/message.model.js';
 import { logger } from '../../utils/logger.js';
 
 export class WhatsAppWebhookController {
@@ -61,11 +62,23 @@ export class WhatsAppWebhookController {
         } else if (event.eventType === 'status_update' && event.status) {
           logger.info('Received live delivery status update from Meta', {
             providerMessageId: event.providerMessageId,
-            status: event.status
+            status: event.status,
+            errorMessage: event.errorMessage,
+            errors: (event.rawPayload as any)?.errors
           });
 
           if (event.status === 'delivered' || event.status === 'read') {
             await MessagingService.handleStatusUpdate(event.providerMessageId, event.status);
+          } else if (event.status === 'failed') {
+            const errDetail = event.errorMessage || JSON.stringify((event.rawPayload as any)?.errors || 'Delivery failed');
+            logger.warn('Meta delivery failed for message', {
+              providerMessageId: event.providerMessageId,
+              error: errDetail
+            });
+            await Message.updateOne(
+              { providerMessageId: event.providerMessageId },
+              { $set: { status: 'failed', errorMessage: errDetail } }
+            );
           }
         }
       }

@@ -123,17 +123,20 @@ export class ConversationsService {
     // Reset unread count when messages are retrieved
     await Conversation.updateOne({ _id: convObjId }, { $set: { unreadCount: 0 } });
 
-    const [messages, total] = await Promise.all([
+    const [recentMessages, total] = await Promise.all([
       Message.find({ conversationId: convObjId })
         .populate('senderUserId', 'name email role')
-        .sort({ createdAt: 1 })
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
       Message.countDocuments({ conversationId: convObjId })
     ]);
 
+    // Reverse to chronological order (oldest to newest among the most recent messages)
+    const chronologicalMessages = recentMessages.reverse();
+
     return {
-      messages: messages.map((m) => m.toSafeObject()),
+      messages: chronologicalMessages.map((m) => m.toSafeObject()),
       total,
       page,
       limit
@@ -188,6 +191,24 @@ export class ConversationsService {
     conversation.unreadCount = 0;
     await conversation.save();
 
+    // Pause any active workflow executions for this contact while agent is actively talking
+    const { WorkflowExecution } = await import('../../models/workflow-execution.model.js');
+    await WorkflowExecution.updateMany(
+      {
+        contactId: contact._id,
+        status: { $in: ['waiting_for_reply', 'running'] }
+      },
+      { $set: { status: 'paused_for_human' } }
+    );
+
+    const statusPayload = {
+      conversationId,
+      assignedUserId: agentUserId,
+      status: 'agent_assigned'
+    };
+    emitToTeam('conversation:status_changed', statusPayload);
+    emitToConversation(conversationId, 'conversation:status_changed', statusPayload);
+
     const safeMessage = message.toSafeObject();
 
     // Broadcast real-time message via Socket.IO
@@ -219,6 +240,16 @@ export class ConversationsService {
     conversation.status = 'agent_assigned';
     conversation.assignedUserId = new Types.ObjectId(agentUserId);
     await conversation.save();
+
+    // Pause any active workflow executions for this contact while agent is actively talking
+    const { WorkflowExecution } = await import('../../models/workflow-execution.model.js');
+    await WorkflowExecution.updateMany(
+      {
+        contactId: conversation.contactId,
+        status: { $in: ['waiting_for_reply', 'running'] }
+      },
+      { $set: { status: 'paused_for_human' } }
+    );
 
     const payload = {
       conversationId,

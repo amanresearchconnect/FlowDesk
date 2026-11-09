@@ -1,7 +1,9 @@
 export interface IVerificationQuery {
   phone: string;
   surveyId?: string;
+  email?: string;
   sheetName?: string;
+  spreadsheetId?: string;
 }
 
 export interface IVerificationResult {
@@ -23,7 +25,7 @@ export interface IVerificationStatus {
 export interface IVerificationProvider {
   name: string;
   verifySubmission(query: IVerificationQuery): Promise<IVerificationResult>;
-  testConnection(): Promise<IVerificationStatus>;
-  appendRow?(sheetName: string, rowValues: any[]): Promise<{ success: boolean; rowNumber?: number }>;
+  testConnection(customId?: string): Promise<IVerificationStatus>;
+  appendRow?(sheetName: string, rowValues: any[], customSpreadsheetId?: string): Promise<{ success: boolean; rowNumber?: number }>;
 }
 
