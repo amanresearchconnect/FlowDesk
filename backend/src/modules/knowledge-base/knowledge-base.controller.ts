@@ -20,6 +20,7 @@ export class KnowledgeBaseController {
       const query = req.query as any;
       const result = await KnowledgeBaseService.listArticles({
         category: query.category,
+        collectionId: query.collectionId,
         search: query.search,
         isActive: query.isActive,
         page: query.page ? Number(query.page) : 1,
@@ -71,6 +72,68 @@ export class KnowledgeBaseController {
       res.status(200).json({
         success: true,
         message: 'Knowledge base article deleted successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async uploadPdf(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const file = req.file;
+      if (!file) {
+        res.status(400).json({
+          success: false,
+          message: 'No PDF file uploaded. Field name must be "pdf".'
+        });
+        return;
+      }
+
+      const userId = (req as any).user?.id;
+      const { name, category, description } = req.body;
+
+      const result = await KnowledgeBaseService.parseAndIngestPdf(
+        file.buffer,
+        file.originalname,
+        name,
+        category || 'recruitment',
+        description,
+        userId
+      );
+
+      res.status(201).json({
+        success: true,
+        message: `Successfully parsed and ingested ${result.articles.length} knowledge articles from ${file.originalname}`,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async listCollections(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { category, search } = req.query as any;
+      const collections = await KnowledgeBaseService.listCollections({
+        category,
+        search
+      });
+
+      res.status(200).json({
+        success: true,
+        data: collections
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public static async removeCollection(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await KnowledgeBaseService.deleteCollection(req.params.id);
+      res.status(200).json({
+        success: true,
+        message: 'Knowledge collection and all its articles deleted successfully'
       });
     } catch (error) {
       next(error);

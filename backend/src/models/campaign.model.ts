@@ -1,6 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
-export type CampaignStatus = 'draft' | 'running' | 'paused' | 'completed' | 'cancelled';
+export type CampaignStatus = 'draft' | 'running' | 'active' | 'paused' | 'completed' | 'cancelled';
 
 export interface ICampaignStats {
   totalContacts: number;
@@ -9,6 +9,9 @@ export interface ICampaignStats {
   read: number;
   replied: number;
   failed: number;
+  startedWorkflow?: number;
+  completedGoal?: number;
+  humanEscalated?: number;
 }
 
 export interface ICampaign {
@@ -16,6 +19,7 @@ export interface ICampaign {
   description?: string;
   contactListId: Types.ObjectId;
   workflowId?: Types.ObjectId;
+  knowledgeBaseId?: Types.ObjectId;
   messageTemplate: string;
   buttons?: Array<{ id: string; title: string }>;
   status: CampaignStatus;
@@ -56,6 +60,11 @@ const campaignSchema = new Schema<ICampaignDocument>(
       ref: 'Workflow',
       default: null
     },
+    knowledgeBaseId: {
+      type: Schema.Types.ObjectId,
+      ref: 'KnowledgeCollection',
+      default: null
+    },
     messageTemplate: {
       type: String,
       required: [true, 'Message template is required'],
@@ -67,7 +76,7 @@ const campaignSchema = new Schema<ICampaignDocument>(
     },
     status: {
       type: String,
-      enum: ['draft', 'running', 'paused', 'completed', 'cancelled'],
+      enum: ['draft', 'running', 'active', 'paused', 'completed', 'cancelled'],
       default: 'draft'
     },
     stats: {
@@ -76,7 +85,10 @@ const campaignSchema = new Schema<ICampaignDocument>(
       delivered: { type: Number, default: 0 },
       read: { type: Number, default: 0 },
       replied: { type: Number, default: 0 },
-      failed: { type: Number, default: 0 }
+      failed: { type: Number, default: 0 },
+      startedWorkflow: { type: Number, default: 0 },
+      completedGoal: { type: Number, default: 0 },
+      humanEscalated: { type: Number, default: 0 }
     },
     throttleRatePerSecond: {
       type: Number,

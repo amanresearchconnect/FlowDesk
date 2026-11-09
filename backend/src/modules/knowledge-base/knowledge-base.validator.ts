@@ -1,7 +1,9 @@
 import { z } from 'zod';
 
+const categoryEnum = z.enum(['recruitment', 'survey', 'sales', 'support', 'onboarding', 'general']);
+
 export const createArticleSchema = z.object({
-  category: z.enum(['recruitment', 'survey', 'onboarding', 'general']),
+  category: categoryEnum,
   title: z.string().min(3).max(250),
   content: z.string().min(10),
   keywords: z.array(z.string().min(1)).optional().default([]),
@@ -13,7 +15,7 @@ export const updateArticleParamsSchema = z.object({
 });
 
 export const updateArticleBodySchema = z.object({
-  category: z.enum(['recruitment', 'survey', 'onboarding', 'general']).optional(),
+  category: categoryEnum.optional(),
   title: z.string().min(3).max(250).optional(),
   content: z.string().min(10).optional(),
   keywords: z.array(z.string().min(1)).optional(),
@@ -21,7 +23,7 @@ export const updateArticleBodySchema = z.object({
 });
 
 export const queryArticleSchema = z.object({
-  category: z.enum(['recruitment', 'survey', 'onboarding', 'general']).optional(),
+  category: categoryEnum.optional(),
   search: z.string().optional(),
   isActive: z
     .string()

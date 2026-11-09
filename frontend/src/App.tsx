@@ -9,6 +9,7 @@ import { Contacts } from './pages/Contacts';
 import { Workflows } from './pages/Workflows';
 import { KnowledgeBase } from './pages/KnowledgeBase';
 import { Integrations } from './pages/Integrations';
+import { Analytics } from './pages/Analytics';
 
 // Protected Route Guard
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -34,6 +35,7 @@ export const App: React.FC = () => {
         <Route index element={<Navigate to="/inbox" replace />} />
         <Route path="inbox" element={<Inbox />} />
         <Route path="campaigns" element={<Campaigns />} />
+        <Route path="analytics" element={<Analytics />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="knowledge-base" element={<KnowledgeBase />} />

@@ -15,7 +15,7 @@ These rules bind all software development within the FlowDesk codebase.
 ## 2. Abstractions and decoupling
 
 - **Messaging independence**: Never import WhatsApp provider SDKs or construct Meta-specific payloads outside `providers/whatsapp/`. Core services interact exclusively with the `IMessagingProvider` interface.
-- **Workflow generality**: Never hardcode recruitment-specific terminology or logic into the workflow engine. Workflows execute generic step types (`send_message`, `wait_for_reply`, `condition`, `delay`, `verify_data`, `update_record`, `terminate`).
+- **Workflow & domain generality**: FlowDesk is a general-purpose conversational workflow and automation platform for **Surveys, Sales Outreach, Lead Qualification, Operations, Customer Support, and Recruitment**. Never restrict system prompts, schemas, or UI design exclusively to recruitment. Use domain-neutral concepts throughout: `Contact` / `Client` / `Lead` (not only Candidate), `Knowledge Base Collection / Document` (not only Job Description), and generic workflow stages (`send_message`, `wait_for_reply`, `condition`, `delay`, `verify_data`, `update_record`, `terminate`).
 - **AI sandbox boundaries**:
   - The AI agent never receives direct database connections or credentials.
   - The AI agent never executes database writes directly.

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Send,
   Plus,
@@ -13,7 +14,9 @@ import {
   Layers,
   AlertCircle,
   GitBranch,
-  Sparkles
+  Sparkles,
+  BookOpen,
+  BarChart3
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button } from '../components/ui/Button.js';
@@ -35,6 +38,14 @@ interface CampaignItem {
     id: string;
     name: string;
   };
+  knowledgeBaseId?: {
+    id?: string;
+    _id?: string;
+    name: string;
+    category?: string;
+    sourceFileName?: string;
+    articlesCount?: number;
+  } | string | null;
   buttons?: Array<{ id: string; title: string }>;
   stats: {
     totalContacts: number;
@@ -61,10 +72,21 @@ interface WorkflowItem {
   name: string;
 }
 
+interface KnowledgeBaseItem {
+  id: string;
+  _id: string;
+  name: string;
+  category?: string;
+  sourceFileName?: string;
+  articlesCount?: number;
+}
+
 export const Campaigns: React.FC = () => {
+  const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [contactLists, setContactLists] = useState<ContactListItem[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal State
@@ -72,6 +94,7 @@ export const Campaigns: React.FC = () => {
   const [name, setName] = useState('');
   const [selectedListId, setSelectedListId] = useState('');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
+  const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState('');
   const [useInteractiveButtons, setUseInteractiveButtons] = useState(true);
   const [buttons, setButtons] = useState<Array<{ id: string; title: string }>>([
     { id: 'btn_yes', title: 'YES' },
@@ -84,10 +107,11 @@ export const Campaigns: React.FC = () => {
 
   const fetchData = async () => {
     try {
-      const [campRes, listRes, wfRes] = await Promise.all([
+      const [campRes, listRes, wfRes, kbRes] = await Promise.all([
         api.get('/campaigns'),
         api.get('/contact-lists'),
-        api.get('/workflows')
+        api.get('/workflows'),
+        api.get('/knowledge-base/collections')
       ]);
 
       const normalizedLists = (listRes.data || []).map((l: any) => ({
@@ -105,10 +129,16 @@ export const Campaigns: React.FC = () => {
         id: c.id || c._id,
         _id: c.id || c._id
       }));
+      const normalizedKbs = (kbRes.data || []).map((k: any) => ({
+        ...k,
+        id: k.id || k._id,
+        _id: k.id || k._id
+      }));
 
       setCampaigns(normalizedCamps);
       setContactLists(normalizedLists);
       setWorkflows(normalizedWfs);
+      setKnowledgeBases(normalizedKbs);
 
       if (normalizedLists.length > 0 && !selectedListId) {
         setSelectedListId(normalizedLists[0].id);
@@ -138,12 +168,14 @@ export const Campaigns: React.FC = () => {
         name: name.trim(),
         contactListId: selectedListId,
         workflowId: selectedWorkflowId || null,
+        knowledgeBaseId: selectedKnowledgeBaseId || null,
         messageTemplate: isWorkflowDriven ? '[Workflow Driven]' : messageTemplate,
         buttons: isWorkflowDriven ? [] : (useInteractiveButtons ? buttons : [])
       });
 
       setIsCreateModalOpen(false);
       setName('');
+      setSelectedKnowledgeBaseId('');
       fetchData();
     } catch (err: any) {
       alert(`Campaign creation failed: ${err.message}`);
@@ -199,10 +231,16 @@ export const Campaigns: React.FC = () => {
           </p>
         </div>
 
-        <Button variant="primary" onClick={() => setIsCreateModalOpen(true)}>
-          <Plus className="w-4 h-4 mr-1.5" />
-          Create Campaign
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => navigate('/analytics')}>
+            <BarChart3 className="w-4 h-4 mr-1.5 text-slate-600" />
+            Conversion Funnel
+          </Button>
+          <Button variant="primary" onClick={() => setIsCreateModalOpen(true)}>
+            <Plus className="w-4 h-4 mr-1.5" />
+            Create Campaign
+          </Button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -213,7 +251,7 @@ export const Campaigns: React.FC = () => {
             <Send className="w-4 h-4 text-slate-400" />
           </div>
           <div className="text-2xl font-bold text-slate-900">{totalDispatched}</div>
-          <p className="text-[11px] text-slate-400">Total WhatsApp messages sent</p>
+          <p className="text-[11px] text-slate-400">Total unique contacts messaged</p>
         </Card>
 
         <Card className="p-4 space-y-1">
@@ -231,16 +269,16 @@ export const Campaigns: React.FC = () => {
             <Eye className="w-4 h-4 text-sky-600" />
           </div>
           <div className="text-2xl font-bold text-slate-900">{readRate}%</div>
-          <p className="text-[11px] text-sky-600 font-medium">{totalRead} candidates opened</p>
+          <p className="text-[11px] text-sky-600 font-medium">{totalRead} contacts opened</p>
         </Card>
 
         <Card className="p-4 space-y-1">
           <div className="flex items-center justify-between text-slate-500">
-            <span className="text-xs font-semibold uppercase tracking-wider">Reply Engagement</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Contact Response</span>
             <MessageSquare className="w-4 h-4 text-indigo-600" />
           </div>
           <div className="text-2xl font-bold text-slate-900">{replyRate}%</div>
-          <p className="text-[11px] text-indigo-600 font-medium">{totalReplied} responses received</p>
+          <p className="text-[11px] text-indigo-600 font-medium">{totalReplied} unique contacts replied</p>
         </Card>
       </div>
 
@@ -282,6 +320,12 @@ export const Campaigns: React.FC = () => {
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
                             <GitBranch className="w-2.5 h-2.5" />
                             {camp.workflowId.name || 'Workflow'}
+                          </span>
+                        )}
+                        {camp.knowledgeBaseId && typeof camp.knowledgeBaseId === 'object' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200" title={camp.knowledgeBaseId.name}>
+                            <BookOpen className="w-2.5 h-2.5 text-sky-600" />
+                            KB: {camp.knowledgeBaseId.name}
                           </span>
                         )}
                         {camp.buttons && camp.buttons.length > 0 && (
@@ -333,6 +377,16 @@ export const Campaigns: React.FC = () => {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => navigate(`/analytics?campaignId=${camp.id}`)}
+                          title="View Conversion Funnel & Drop-off Diagnostics"
+                          className="text-slate-600 hover:text-slate-900 border-slate-200"
+                        >
+                          <BarChart3 className="w-3 h-3 mr-1 text-slate-500" />
+                          Funnel
+                        </Button>
                         {camp.status === 'draft' && (
                           <Button
                             size="xs"
@@ -431,6 +485,38 @@ export const Campaigns: React.FC = () => {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
+                Linked Knowledge Base / Document Collection (Optional)
+              </label>
+              <a
+                href="/knowledge-base"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-emerald-600 hover:text-emerald-700 font-semibold"
+              >
+                + Upload New PDF
+              </a>
+            </div>
+            <select
+              className="flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              value={selectedKnowledgeBaseId}
+              onChange={(e) => setSelectedKnowledgeBaseId(e.target.value)}
+            >
+              <option value="">None (Use General Company Knowledge Base)</option>
+              {knowledgeBases.map((kb) => (
+                <option key={kb.id || kb._id} value={kb.id || kb._id}>
+                  📄 {kb.name} ({kb.articlesCount || 0} articles{kb.sourceFileName ? ` • ${kb.sourceFileName}` : ''})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-slate-500">
+              When contacts ask off-script questions (product pricing, service specifications, survey details, or company policies), the AI bot answers using this document before nudging them back to complete the workflow.
+            </p>
           </div>
 
           {selectedWorkflowId ? (

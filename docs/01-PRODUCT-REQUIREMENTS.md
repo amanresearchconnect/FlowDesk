@@ -4,7 +4,7 @@
 
 FlowDesk is an internal WhatsApp automation platform designed for company operations. The platform enables non-technical employees to import contact records, execute structured communication campaigns, orchestrate multi-step interactive workflows, provide automated responses through an AI assistant, and hand off conversations to human operators in a centralized team inbox.
 
-The initial target use case is candidate recruitment and survey verification. The underlying workflow engine and messaging infrastructure remain domain-agnostic to support onboarding, internal surveys, event registrations, and document collection.
+FlowDesk is fully domain-agnostic and powers multi-channel conversational flows for **Surveys & NPS, Sales Lead Qualification, Customer Support, Community Onboarding, and Recruitment** with Google Sheets synchronization.
 
 ## User personas
 

@@ -15,6 +15,7 @@ export interface CreateCampaignInput {
   description?: string;
   contactListId: string;
   workflowId?: string | null;
+  knowledgeBaseId?: string | null;
   messageTemplate: string;
   buttons?: Array<{ id: string; title: string }>;
   throttleRatePerSecond?: number;
@@ -40,6 +41,9 @@ export class CampaignsService {
       contactListId: new Types.ObjectId(input.contactListId),
       workflowId: input.workflowId && mongoose.isValidObjectId(input.workflowId)
         ? new Types.ObjectId(input.workflowId)
+        : null,
+      knowledgeBaseId: input.knowledgeBaseId && mongoose.isValidObjectId(input.knowledgeBaseId)
+        ? new Types.ObjectId(input.knowledgeBaseId)
         : null,
       messageTemplate: input.messageTemplate,
       buttons: input.buttons || [],
@@ -253,6 +257,7 @@ export class CampaignsService {
       Campaign.find()
         .populate('contactListId', 'name totalCount validCount')
         .populate('workflowId', 'name isPublished')
+        .populate('knowledgeBaseId', 'name category sourceFileName articlesCount')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -276,7 +281,8 @@ export class CampaignsService {
 
     const campaign = await Campaign.findById(campaignId)
       .populate('contactListId', 'name totalCount validCount')
-      .populate('workflowId', 'name isPublished');
+      .populate('workflowId', 'name isPublished')
+      .populate('knowledgeBaseId', 'name category sourceFileName articlesCount');
     if (!campaign) {
       throw new NotFoundError('Campaign not found');
     }

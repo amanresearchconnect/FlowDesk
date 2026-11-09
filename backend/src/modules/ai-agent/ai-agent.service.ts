@@ -6,6 +6,9 @@ import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service.j
 import { Contact } from '../../models/contact.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
+import { Campaign } from '../../models/campaign.model.js';
+import { WorkflowExecution } from '../../models/workflow-execution.model.js';
+import { Workflow } from '../../models/workflow.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
 import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { logger } from '../../utils/logger.js';
@@ -85,13 +88,61 @@ export class AIAgentService {
       };
     }
 
-    // 2. Retrieve relevant Knowledge Base context
-    const kbArticles = await KnowledgeBaseService.searchRelevantArticles(text, undefined, 4);
+    // 2. Retrieve relevant Knowledge Base context (scoped to active campaign if present)
+    let scopedCollectionId: string | undefined;
+    const targetCampaignId = conversation.activeCampaignId || (conversation as any).campaignId;
+    if (targetCampaignId) {
+      try {
+        const campaign = await Campaign.findById(targetCampaignId);
+        if (campaign?.knowledgeBaseId) {
+          scopedCollectionId = campaign.knowledgeBaseId.toString();
+        }
+      } catch (err) {
+        // ignore lookup error
+      }
+    }
+
+    const kbArticles = await KnowledgeBaseService.searchRelevantArticles(
+      text,
+      undefined,
+      4,
+      scopedCollectionId
+    );
     let kbContext = '';
     if (kbArticles.length > 0) {
       kbContext = kbArticles
-        .map((art) => `[Title: ${art.title} (Category: ${art.category})]\n${art.content}`)
+        .map((art) => `[Title: ${art.title} (Category: ${art.category}${art.sourceFileName ? `, Source: ${art.sourceFileName}` : ''})]\n${art.content}`)
         .join('\n\n');
+    }
+
+    // 2b. Check if candidate is in an active workflow awaiting response
+    let activeWorkflowQuestionNotice = '';
+    try {
+      const activeExec = await WorkflowExecution.findOne({
+        contactId: contact._id,
+        status: { $in: ['waiting_for_reply', 'running'] }
+      });
+      if (activeExec) {
+        const wf = await Workflow.findById(activeExec.workflowId);
+        const currNode = wf?.nodes.find((n) => n.id === activeExec.currentStepId);
+        if (currNode) {
+          const promptQuestion = currNode.config?.body || currNode.name;
+          activeWorkflowQuestionNotice = `
+<active_workflow_stage>
+The contact is currently progressing through an automated workflow at stage: "${currNode.name}".
+The pending question/action awaiting their response is:
+"${promptQuestion}"
+
+CRITICAL INSTRUCTIONS:
+1. First, answer the contact's side-question or query warmly and concisely using the Knowledge Base above.
+2. At the very end of your response, politely guide them back to continue their workflow by appending:
+"By the way, to proceed: [briefly repeat or refer to the pending question]"
+DO NOT abort, complete, or cancel their progress in the workflow.
+</active_workflow_stage>`;
+        }
+      }
+    } catch (wfErr) {
+      // ignore
     }
 
     // 3. Retrieve recent conversation history (last 8 messages)
@@ -102,21 +153,22 @@ export class AIAgentService {
     recentMessages.reverse();
 
     // 4. Build System Prompt & Instructions
-    const systemInstruction = `You are FlowDesk's AI Assistant for company recruitment and operations.
-Your job is to assist candidates and survey participants politely, clearly, and concisely.
+    const contactDisplayName = [contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'User';
+    const systemInstruction = `You are FlowDesk's AI Assistant for company operations, sales outreach, customer feedback surveys, and user support.
+Your job is to assist contacts, leads, clients, survey participants, and candidates politely, clearly, and concisely.
 
 Strict Boundaries:
 - Only provide information confirmed by the Knowledge Base or approved tools below.
-- Never guess or speculate regarding application statuses, deadlines, or requirements.
-- If you cannot answer with high certainty or if a candidate seems distressed, call request_human_assistance.
-- If the candidate asks about survey verification, check verify_survey_completion.
-- If the candidate asks about job hours or requirements, check get_job_details or use knowledge context.
-- Candidate Name: ${contact.firstName || 'Candidate'} ${contact.lastName || ''}
-- Candidate Phone: ${contact.phone}
+- Never guess or speculate regarding pricing, policies, deadlines, survey results, or requirements.
+- If you cannot answer with high certainty or if a user seems distressed, call request_human_assistance.
+- If the contact asks about survey verification, check verify_survey_completion.
+- If the contact asks about service/job details or specifications, check get_job_details or use knowledge context.
+- Contact Name: ${contactDisplayName}
+- Contact Phone: ${contact.phone}
 
 <knowledge_context>
 ${kbContext || 'No specific knowledge base articles found for this topic.'}
-</knowledge_context>`;
+</knowledge_context>${activeWorkflowQuestionNotice}`;
 
     const messages: IAIChatMessage[] = [{ role: 'system', content: systemInstruction }];
 

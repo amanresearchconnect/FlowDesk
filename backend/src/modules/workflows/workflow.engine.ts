@@ -7,6 +7,7 @@ import {
 import { Contact } from '../../models/contact.model.js';
 import { Conversation } from '../../models/conversation.model.js';
 import { Message } from '../../models/message.model.js';
+import { Campaign } from '../../models/campaign.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
 import { VerificationService } from '../verification/verification.service.js';
 import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
@@ -69,6 +70,10 @@ export class WorkflowEngine {
       contactId,
       startStepId: initialNode.id
     });
+
+    if (campaignId) {
+      await Campaign.updateOne({ _id: campaignId }, { $inc: { 'stats.startedWorkflow': 1 } });
+    }
 
     // Make sure conversation is in 'bot' status so automated bot processes candidate replies
     const conv = await Conversation.findOne({ contactId: new Types.ObjectId(contactId) });
@@ -371,6 +376,9 @@ export class WorkflowEngine {
             reason: node.config?.reason || 'Workflow directed human handoff'
           });
         }
+        if (execution.campaignId) {
+          await Campaign.updateOne({ _id: execution.campaignId }, { $inc: { 'stats.humanEscalated': 1 } });
+        }
         this.logStep(execution, node, 'completed', { escalated: true });
         if (node.nextStepId) {
           await this.advanceToStep(execution, node.nextStepId);
@@ -396,6 +404,9 @@ export class WorkflowEngine {
         execution.status = node.config.outcome === 'failed' ? 'failed' : 'completed';
         this.logStep(execution, node, 'completed', node.config);
         await execution.save();
+        if (execution.status === 'completed' && execution.campaignId) {
+          await Campaign.updateOne({ _id: execution.campaignId }, { $inc: { 'stats.completedGoal': 1 } });
+        }
         logger.info('Workflow execution finished', { executionId: execution._id.toString(), status: execution.status });
         break;
       }
@@ -475,6 +486,15 @@ export class WorkflowEngine {
 
       const rawConditionLower = rawCondition.toLowerCase();
 
+      const AFFIRMATIVE_SYNONYMS = ['yes', 'yep', 'yeah', 'sure', 'definitely', 'interested', 'y', 'agree', 'ready', 'proceed', 'apply', 'ok', 'okay', 'yup', 'haan', 'ha'];
+      const NEGATIVE_SYNONYMS = ['no', 'nope', 'nah', 'not really', 'cancel', 'not interested', 'stop', 'reject', 'pass', 'nahi', 'na'];
+
+      const isAffirmativeBranch = candidateValues.some((v) => AFFIRMATIVE_SYNONYMS.includes(v)) || rawConditionLower.includes('yes');
+      const isNegativeBranch = candidateValues.some((v) => NEGATIVE_SYNONYMS.includes(v)) || rawConditionLower.includes('no');
+
+      const isAffirmativeText = AFFIRMATIVE_SYNONYMS.some((syn) => textLower === syn || textLower.startsWith(syn + ' ') || textLower.includes(' ' + syn));
+      const isNegativeText = NEGATIVE_SYNONYMS.some((syn) => textLower === syn || textLower.startsWith(syn + ' ') || textLower.includes(' ' + syn));
+
       if (branch.conditionType === 'regex' && rawCondition) {
         try {
           const regex = new RegExp(rawCondition, 'i');
@@ -489,7 +509,9 @@ export class WorkflowEngine {
         rawConditionLower === textLower ||
         rawConditionLower.includes(textLower) ||
         textLower.includes(rawConditionLower) ||
-        candidateValues.some((val) => textLower === val || textLower.includes(val) || val.includes(textLower))
+        candidateValues.some((val) => textLower === val || textLower.includes(val) || val.includes(textLower)) ||
+        (isAffirmativeBranch && isAffirmativeText) ||
+        (isNegativeBranch && isNegativeText)
       ) {
         targetStepId = branch.targetStepId;
         break;
@@ -580,6 +602,10 @@ export class WorkflowEngine {
     }
     execution.status = 'paused_for_human';
     await execution.save();
+
+    if (execution.campaignId) {
+      await Campaign.updateOne({ _id: execution.campaignId }, { $inc: { 'stats.humanEscalated': 1 } });
+    }
 
     const conv = await Conversation.findOne({ contactId: execution.contactId });
     if (conv) {

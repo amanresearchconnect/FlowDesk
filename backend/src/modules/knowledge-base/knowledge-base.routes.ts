@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { KnowledgeBaseController } from './knowledge-base.controller.js';
 import { requireAuth } from '../../middlewares/auth.middleware.js';
 import { requireRole } from '../../middlewares/rbac.middleware.js';
@@ -10,9 +11,30 @@ import {
   queryArticleSchema
 } from './knowledge-base.validator.js';
 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB
+});
+
 const router = Router();
 
 router.use(requireAuth);
+
+// Collection routes (must precede /:id)
+router.get('/collections', KnowledgeBaseController.listCollections);
+router.delete(
+  '/collections/:id',
+  requireRole(['admin', 'manager']),
+  KnowledgeBaseController.removeCollection
+);
+
+// PDF Document Upload & Ingest
+router.post(
+  '/upload-pdf',
+  requireRole(['admin', 'manager']),
+  upload.single('pdf'),
+  KnowledgeBaseController.uploadPdf
+);
 
 router.get(
   '/',

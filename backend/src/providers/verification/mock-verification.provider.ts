@@ -96,6 +96,22 @@ export class MockVerificationProvider implements IVerificationProvider {
     };
   }
 
+  public async appendRow(sheetName: string, rowValues: any[]): Promise<{ success: boolean; rowNumber: number }> {
+    logger.info('MockVerificationProvider: Appended new row to mock spreadsheet', {
+      sheetName,
+      rowValues
+    });
+    const phone = String(rowValues[1] || '');
+    const surveyId = String(rowValues[2] || `SURV-${Date.now()}`);
+    this.records.push({
+      phone,
+      surveyId,
+      submittedAt: new Date().toISOString(),
+      rowValues: { values: rowValues }
+    });
+    return { success: true, rowNumber: this.records.length + 1 };
+  }
+
   public async testConnection(): Promise<IVerificationStatus> {
     return {
       connected: true,

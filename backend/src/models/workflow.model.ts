@@ -11,6 +11,7 @@ export type WorkflowNodeType =
   | 'append_to_sheet'
   | 'update_record'
   | 'ai_conversation'
+  | 'ai_parse'
   | 'human_handoff'
   | 'terminate';
 
@@ -73,6 +74,7 @@ const workflowNodeSchema = new Schema<IWorkflowNode>(
         'append_to_sheet',
         'update_record',
         'ai_conversation',
+        'ai_parse',
         'human_handoff',
         'terminate'
       ],

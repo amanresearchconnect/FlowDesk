@@ -56,10 +56,31 @@ export class MessagingService {
       return null;
     }
 
-    // Update campaign counters if this message is tied to a campaign
-    if (message.campaignId) {
-      const incField = status === 'delivered' ? { 'stats.delivered': 1 } : { 'stats.read': 1 };
-      await Campaign.updateOne({ _id: message.campaignId }, { $inc: incField });
+    // Update campaign counters if this message is tied to a campaign (unique contact count)
+    if (message.campaignId && message.contactId) {
+      if (status === 'delivered') {
+        const alreadyDelivered = await Message.exists({
+          campaignId: message.campaignId,
+          contactId: message.contactId,
+          direction: 'outbound',
+          status: { $in: ['delivered', 'read'] },
+          _id: { $ne: message._id }
+        });
+        if (!alreadyDelivered) {
+          await Campaign.updateOne({ _id: message.campaignId }, { $inc: { 'stats.delivered': 1 } });
+        }
+      } else if (status === 'read') {
+        const alreadyRead = await Message.exists({
+          campaignId: message.campaignId,
+          contactId: message.contactId,
+          direction: 'outbound',
+          status: 'read',
+          _id: { $ne: message._id }
+        });
+        if (!alreadyRead) {
+          await Campaign.updateOne({ _id: message.campaignId }, { $inc: { 'stats.read': 1 } });
+        }
+      }
     }
 
     // Broadcast status update via Socket.IO
@@ -159,9 +180,17 @@ export class MessagingService {
       contact: contact.toSafeObject()
     });
 
-    // If linked to a campaign, increment the 'replied' stat
+    // If linked to a campaign, increment the 'replied' stat ONLY if this is the contact's first reply to the campaign
     if (campaignId) {
-      await Campaign.updateOne({ _id: campaignId }, { $inc: { 'stats.replied': 1 } });
+      const previousReplies = await Message.exists({
+        campaignId,
+        contactId: contact._id,
+        direction: 'inbound',
+        _id: { $ne: message._id }
+      });
+      if (!previousReplies) {
+        await Campaign.updateOne({ _id: campaignId }, { $inc: { 'stats.replied': 1 } });
+      }
     }
 
     // Trigger workflow engine if contact is waiting for reply
