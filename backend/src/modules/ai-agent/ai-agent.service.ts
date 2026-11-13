@@ -12,6 +12,7 @@ import { Workflow } from '../../models/workflow.model.js';
 import { getMessagingProvider } from '../../providers/messaging/messaging.factory.js';
 import { emitToConversation, emitToTeam } from '../../socket/socket.server.js';
 import { logger } from '../../utils/logger.js';
+import { env } from '../../config/env.js';
 
 export interface HandleAIMessageParams {
   conversationId: string | Types.ObjectId;
@@ -39,6 +40,312 @@ export class AIAgentService {
     'talk to someone',
     'real person'
   ];
+
+  /**
+   * Semantic AI Intent Classifier for dynamic workflow progression
+   * Evaluates natural language messages, colloquialisms, slang, and multilingual replies
+   * against candidate workflow branches.
+   */
+  public static async classifyIntentForBranches(params: {
+    stageName: string;
+    stagePrompt?: string;
+    candidateText: string;
+    branches: Array<{
+      targetStepId: string;
+      conditionValue?: string;
+    }>;
+  }): Promise<{
+    matched: boolean;
+    targetStepId?: string;
+    confidence: number;
+    extractedVariables?: Record<string, any>;
+  }> {
+    const { stageName, stagePrompt, candidateText, branches } = params;
+
+    if (!branches || branches.length === 0) {
+      return { matched: false, confidence: 0 };
+    }
+
+    try {
+      const aiProvider = getAIProvider();
+
+      const branchDescriptions = branches
+        .map((b, i) => `[Branch ${i + 1}] ID: "${b.targetStepId}", Intent/Condition: "${b.conditionValue || 'default'}"`)
+        .join('\n');
+
+      const systemPrompt = `You are a high-accuracy conversational intent classifier for an enterprise WhatsApp workflow engine.
+Current Workflow Stage: "${stageName}"
+Prompt/Question previously sent to user: "${stagePrompt || 'Awaiting customer response'}"
+
+Available Workflow Branches:
+${branchDescriptions}
+
+User's incoming WhatsApp message:
+"${candidateText}"
+
+Analyze the user's message:
+1. Is the user attempting to answer, confirm, agree, decline, or choose one of the available branches?
+   (Support natural language, colloquialisms, slang, Hinglish/multilingual like "haan/nahi", abbreviations, and typos).
+2. If yes, select the most appropriate Branch ID from the list above and assign a confidence score between 0.0 and 1.0.
+3. If the user is asking an unrelated question, seeking company/role clarification, or their message does NOT clearly choose any branch, output "matched": false.
+4. Extract any user-provided entities if present (e.g. name, email, phone, surveyId, paymentMethod, date).
+
+Respond ONLY with valid JSON in this exact structure:
+{
+  "matched": true,
+  "targetStepId": "<exact branch ID from above>",
+  "confidence": 0.95,
+  "extractedVariables": {
+    "name": "<extracted or omit>",
+    "email": "<extracted or omit>",
+    "phone": "<extracted or omit>",
+    "surveyId": "<extracted or omit>"
+  }
+}`;
+
+      const res = await aiProvider.chat({
+        messages: [{ role: 'user', content: systemPrompt }],
+        temperature: 0.1,
+        maxTokens: 250
+      });
+
+      const raw = res.content || '';
+      const cleanJson = raw
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+
+      const parsed = JSON.parse(cleanJson);
+
+      const isValidBranch = branches.some((b) => b.targetStepId === parsed.targetStepId);
+
+      if (parsed.matched && parsed.targetStepId && isValidBranch && (parsed.confidence || 0) >= 0.70) {
+        return {
+          matched: true,
+          targetStepId: parsed.targetStepId,
+          confidence: Number(parsed.confidence) || 0.85,
+          extractedVariables: parsed.extractedVariables || {}
+        };
+      }
+
+      return { matched: false, confidence: Number(parsed.confidence) || 0 };
+    } catch (err: any) {
+      logger.warn('AI intent branch classification encountered an error; falling back to deterministic matching', {
+        error: err.message,
+        candidateText: candidateText.substring(0, 50)
+      });
+      return { matched: false, confidence: 0 };
+    }
+  }
+
+  /**
+   * AI Form & Entity Extractor
+   * Extracts multi-field structured data (e.g. 8 questionnaire answers, lead details, etc.)
+   * from free-form natural language messages (English, Hindi, Hinglish, messy bullet points).
+   */
+  public static async extractEntities(params: {
+    text: string;
+    fields: Array<{ name: string; description?: string }> | string[];
+    contextPrompt?: string;
+  }): Promise<{
+    entities: Record<string, any>;
+    confidence: number;
+    rawResponse?: string;
+  }> {
+    const { text, fields, contextPrompt } = params;
+
+    if (!text || !text.trim() || !fields || fields.length === 0) {
+      return { entities: {}, confidence: 0 };
+    }
+
+    const fieldList = fields.map((f) => (typeof f === 'string' ? { name: f.trim(), description: '' } : f));
+    const fieldNames = fieldList.map((f) => f.name);
+
+    try {
+      const aiProvider = getAIProvider();
+
+      const fieldDescriptions = fieldList
+        .map((f) => `- "${f.name}"${f.description ? `: ${f.description}` : ''}`)
+        .join('\n');
+
+      const systemPrompt = `You are a high-accuracy multilingual Entity & Form Data Extractor for an enterprise WhatsApp business automation platform.
+Your task is to extract structured values for the requested fields from a user's conversational WhatsApp reply.
+
+Requested Fields to Extract:
+${fieldDescriptions}
+
+Original Question / Context presented to the user:
+"${contextPrompt || 'Please provide your details'}"
+
+User's incoming WhatsApp message:
+"${text}"
+
+Extraction Rules:
+1. Extract answers corresponding to each requested field.
+2. The user's reply may be in English, Hindi, or Hinglish (e.g. "haan", "nahi", "25 saal", "3 saal ka exp", "malad me rehta hu", "30 din notice").
+3. Normalization:
+   - For yes/no or boolean questions (e.g., "working", "Excel knowledge"): normalize to "Yes" or "No" if clearly affirmative/negative.
+   - For numeric/currency/tenure fields: preserve relevant units (e.g., "3 years", "25", "4.5 LPA", "30 days", "Intermediate").
+   - For location: extract the city/suburb/area (e.g. "Malad West", "Mumbai").
+4. If a field was not mentioned, cannot be inferred, or the user declined to answer, set its value to "" (empty string). Do NOT hallucinate.
+5. Return ONLY a single valid JSON object mapping each exact field name to its extracted string or value.
+
+Output JSON structure:
+{
+${fieldNames.map((fn) => `  "${fn}": "<extracted value or \"\">"`).join(',\n')}
+}`;
+
+      const aiResponse = await aiProvider.chat({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text }
+        ],
+        temperature: 0.1
+      });
+
+      const raw = aiResponse.content || '';
+      logger.debug('AI entity extraction raw response', { raw });
+
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const entities: Record<string, any> = {};
+        for (const f of fieldList) {
+          const directVal = parsed[f.name];
+          if (directVal !== undefined && directVal !== null) {
+            entities[f.name] = String(directVal).trim();
+          } else {
+            const foundKey = Object.keys(parsed).find(
+              (k) => k.toLowerCase().replace(/[\s_-]/g, '') === f.name.toLowerCase().replace(/[\s_-]/g, '')
+            );
+            entities[f.name] = foundKey && parsed[foundKey] !== undefined ? String(parsed[foundKey]).trim() : '';
+          }
+        }
+
+        return {
+          entities,
+          confidence: aiResponse.confidenceScore || 0.95,
+          rawResponse: raw
+        };
+      }
+    } catch (err: any) {
+      logger.warn('AI entity extraction encountered error, falling back to heuristic parsing', { error: err.message });
+    }
+
+    // Heuristic Fallback if AI provider is offline or returns invalid JSON
+    const fallbackEntities = this.heuristicEntityExtractor(text, fieldNames);
+    return {
+      entities: fallbackEntities,
+      confidence: 0.7
+    };
+  }
+
+  /**
+   * Fast rule-based heuristic entity extractor fallback for common fields
+   */
+  public static heuristicEntityExtractor(text: string, fieldNames: string[]): Record<string, string> {
+    const res: Record<string, string> = {};
+
+    for (const rawName of fieldNames) {
+      const name = rawName.toLowerCase();
+      if (name.includes('work') || name.includes('employed')) {
+        const isWorking = /\b(currently working|yes working|working|haan kaam|job kar)\b/i.test(text);
+        const notWorking = /\b(not working|no working|unemployed|jobless|nahi|fresher)\b/i.test(text);
+        res[rawName] = notWorking ? 'No' : isWorking ? 'Yes' : (/\byes\b/i.test(text) ? 'Yes' : '');
+      } else if (name.includes('exp')) {
+        const expMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?|saal)/i) || text.match(/(?:exp|experience)[:\s]*(\d+(?:\.\d+)?(?:\s*years?)?)/i);
+        res[rawName] = expMatch ? (expMatch[1].includes('year') ? expMatch[1] : `${expMatch[1]} years`) : '';
+      } else if (name.includes('age')) {
+        const ageMatch = text.match(/(?:age|years old)[:\s]*(\d{2})/i) || text.match(/\b(\d{2})\s*(?:years? old|yr old|saal)\b/i);
+        res[rawName] = ageMatch ? ageMatch[1] : '';
+      } else if (name.includes('excel')) {
+        const excelMatch =
+          text.match(/(?:excel|ms excel)[:\s]*([a-zA-Z]+)/i) ||
+          text.match(/\b(intermediate|basic|advanced|expert|yes|know|aata hai)\b.*excel/i) ||
+          text.match(/excel.*?\b(intermediate|basic|advanced|expert|yes)\b/i);
+        res[rawName] = excelMatch
+          ? excelMatch[1]
+            ? excelMatch[1].charAt(0).toUpperCase() + excelMatch[1].slice(1)
+            : 'Yes'
+          : text.toLowerCase().includes('excel')
+          ? 'Yes'
+          : '';
+      } else if (name.includes('current ctc') || (name.includes('current') && name.includes('ctc'))) {
+        const ctcMatch = text.match(/(?:current ctc|current|c\.?c\.?t\.?)[:\s]*(\d+(?:\.\d+)?\s*(?:lpa|k|lakhs?|lac|inr)?)/i);
+        res[rawName] = ctcMatch ? ctcMatch[1].trim() : '';
+      } else if (name.includes('expected ctc') || (name.includes('expected') && name.includes('ctc'))) {
+        const expCtcMatch = text.match(/(?:expected ctc|expected|e\.?c\.?t\.?)[:\s]*(\d+(?:\.\d+)?\s*(?:lpa|k|lakhs?|lac|inr)?)/i);
+        res[rawName] = expCtcMatch ? expCtcMatch[1].trim() : '';
+      } else if (name.includes('location') || name.includes('residential') || name.includes('city') || name.includes('address')) {
+        const locMatch = text.match(/(?:living in|location|staying in|resident of|from)[:\s]*([a-zA-Z\s]+?)(?:,|$|\.|\b\d+\s*days)/i);
+        res[rawName] = locMatch ? locMatch[1].trim() : '';
+      } else if (name.includes('notice')) {
+        const noticeMatch = text.match(/(\d+)\s*(?:days?|months?|weeks?|din)\s*(?:notice)?/i) || text.match(/(?:notice period|notice)[:\s]*(\d+\s*(?:days?|months?|weeks?))/i);
+        res[rawName] = noticeMatch ? (noticeMatch[0].includes('notice') ? noticeMatch[0] : `${noticeMatch[0]}`) : '';
+      } else if (name.includes('phone') || name.includes('mobile')) {
+        const phoneMatch = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\b\d{10,13}\b/);
+        res[rawName] = phoneMatch ? phoneMatch[0] : '';
+      } else if (name.includes('email')) {
+        const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        res[rawName] = emailMatch ? emailMatch[0] : '';
+      } else {
+        res[rawName] = '';
+      }
+    }
+    return res;
+  }
+
+  /**
+   * Generates a context-aware AI validation nudge when a candidate replies without providing the required
+   * input (e.g. replies "Okay", asks "Who is this?", or enters text instead of a phone number/email/ID).
+   */
+  public static async generateValidationNudge(params: {
+    candidateName?: string;
+    missingField: 'phone' | 'email' | 'survey_id' | 'any';
+    userReply: string;
+    nodePrompt?: string;
+  }): Promise<string> {
+    const { candidateName, missingField, userReply, nodePrompt } = params;
+
+    let fieldDescription = '10-digit phone number (e.g. 9876543210)';
+    if (missingField === 'email') fieldDescription = 'valid email address (e.g. yourname@example.com)';
+    if (missingField === 'survey_id') fieldDescription = 'Survey ID or verification code';
+    if (missingField === 'any') fieldDescription = 'registered phone number or email address';
+
+    const defaultNudge = candidateName
+      ? `Hey ${candidateName}, could you please share your ${fieldDescription} so we can verify your details in our system?`
+      : `Could you please share your ${fieldDescription} so we can verify your details in our system?`;
+
+    try {
+      const aiProvider = getAIProvider();
+      const prompt = `You are a polite, helpful WhatsApp assistant for FlowDesk.
+The user ${candidateName ? `(${candidateName})` : ''} was asked for their ${fieldDescription} in workflow stage "${nodePrompt || 'Verification'}".
+The user replied: "${userReply}".
+This reply does NOT contain their ${fieldDescription}.
+
+Instructions:
+1. If the user asked a question, expressed doubt, or asked who/what this is, provide a brief, polite, helpful 1-sentence answer.
+2. Then politely ask them to reply with their ${fieldDescription} so we can verify their entry and proceed.
+3. If they just said "ok", "yes", "hey", or something generic, acknowledge briefly and politely request their ${fieldDescription}.
+4. Keep the entire response within 1-2 short, friendly sentences.
+5. Do NOT include markdown asterisks (*), quotes, or hashtags.`;
+
+      const res = await aiProvider.chat({
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        maxTokens: 120
+      });
+
+      const reply = res.content?.trim();
+      if (reply && reply.length > 5 && reply.length < 350) {
+        return reply.replace(/[*#]/g, '');
+      }
+      return defaultNudge;
+    } catch (err: any) {
+      logger.warn('AI validation nudge generation failed; using standard prompt', { error: err.message });
+      return defaultNudge;
+    }
+  }
 
   public static async handleCandidateMessage(
     params: HandleAIMessageParams
@@ -120,23 +427,25 @@ export class AIAgentService {
     try {
       const activeExec = await WorkflowExecution.findOne({
         contactId: contact._id,
-        status: { $in: ['waiting_for_reply', 'running'] }
+        status: { $in: ['waiting_for_reply', 'running', 'delayed'] }
       });
       if (activeExec) {
         const wf = await Workflow.findById(activeExec.workflowId);
         const currNode = wf?.nodes.find((n) => n.id === activeExec.currentStepId);
         if (currNode) {
-          const promptQuestion = currNode.config?.body || currNode.name;
+          const promptQuestion =
+            currNode.config?.messageTemplate ||
+            currNode.config?.body ||
+            currNode.config?.prompt ||
+            '';
           activeWorkflowQuestionNotice = `
 <active_workflow_stage>
-The contact is currently progressing through an automated workflow at stage: "${currNode.name}".
-The pending question/action awaiting their response is:
-"${promptQuestion}"
+The contact is currently in an active recruitment/onboarding workflow.
+${promptQuestion ? `The pending question they were asked is: "${promptQuestion}"` : ''}
 
 CRITICAL INSTRUCTIONS:
-1. First, answer the contact's side-question or query warmly and concisely using the Knowledge Base above.
-2. At the very end of your response, politely guide them back to continue their workflow by appending:
-"By the way, to proceed: [briefly repeat or refer to the pending question]"
+1. First, answer the contact's side-question or query warmly, naturally, and concisely using the Knowledge Base above.
+${promptQuestion ? `2. If natural and appropriate, gently mention that they can also reply to the earlier question whenever they are ready. Speak completely naturally like a friendly coordinator. NEVER use developer node names or robotic formulaic phrases like "By the way, to proceed:".` : ''}
 DO NOT abort, complete, or cancel their progress in the workflow.
 </active_workflow_stage>`;
         }
@@ -326,7 +635,7 @@ ${kbContext || 'No specific knowledge base articles found for this topic.'}
       campaignId: conversation.activeCampaignId || null,
       direction: 'outbound',
       senderType: 'ai',
-      provider: 'mock',
+      provider: env.MESSAGING_PROVIDER || 'mock',
       providerMessageId: sendResult.providerMessageId,
       type: 'text',
       content: { body: bodyText },

@@ -26,6 +26,77 @@ export class MockAIProvider implements IAIProvider {
 
     // Check system message for context such as candidate phone or knowledge base
     const systemMsg = messages.find((m) => m.role === 'system')?.content || '';
+
+    // Check if this is an intent classification request for workflow branches
+    if (userText.includes('intent classifier for an enterprise WhatsApp workflow engine') || systemMsg.includes('intent classifier')) {
+      const isAffirmative = ['yes', 'sure', 'interested', 'ready', 'haan', 'done', 'yup', 'okay', 'bhej', 'count me in', 'apply'].some((w) => lowerText.includes(w));
+      const isNegative = ['no', 'nah', 'not interested', 'cancel', 'stop', 'remove', 'nahi', 'busy', 'decline'].some((w) => lowerText.includes(w));
+
+      const branchMatches = [...userText.matchAll(/\[Branch \d+\] ID: "([^"]+)", Intent\/Condition: "([^"]+)"/g)];
+      let matchedBranchId: string | null = null;
+      if (isAffirmative && branchMatches[0]) {
+        matchedBranchId = branchMatches[0][1];
+      } else if (isNegative && branchMatches[1]) {
+        matchedBranchId = branchMatches[1][1];
+      }
+
+      if (matchedBranchId) {
+        return {
+          content: JSON.stringify({
+            matched: true,
+            targetStepId: matchedBranchId,
+            confidence: 0.95
+          }),
+          finishReason: 'stop'
+        };
+      }
+
+      return {
+        content: JSON.stringify({
+          matched: false
+        }),
+        finishReason: 'stop'
+      };
+    }
+
+    // Check if this is an Entity & Form Data Extractor request
+    if (systemMsg.includes('Entity & Form Data Extractor') || userText.includes('Entity & Form Data Extractor')) {
+      const fieldLines = [...systemMsg.matchAll(/- "([^"]+)"/g)].map((m) => m[1]);
+      const res: Record<string, string> = {};
+      for (const f of fieldLines) {
+        const fn = f.toLowerCase();
+        if (fn.includes('work')) res[f] = /working|yes|haan/i.test(userText) ? 'Yes' : 'No';
+        else if (fn.includes('exp')) {
+          const m = userText.match(/(\d+(?:\.\d+)?)\s*(?:years?|yrs?|saal)/i);
+          res[f] = m ? `${m[1]} years` : '3 years';
+        } else if (fn.includes('age')) {
+          const m = userText.match(/\b(\d{2})\b/);
+          res[f] = m ? m[1] : '25';
+        } else if (fn.includes('excel')) {
+          res[f] = /intermediate|advanced|expert/i.test(userText) ? 'Intermediate' : 'Yes';
+        } else if (fn.includes('current ctc') || (fn.includes('current') && fn.includes('ctc'))) {
+          const m = userText.match(/(?:current\s*ctc|current)[:\s]*(\d+(?:\.\d+)?\s*(?:lpa|k|lakhs?)?)/i);
+          res[f] = m ? m[1].trim() : '4.5 LPA';
+        } else if (fn.includes('expected ctc') || (fn.includes('expected') && fn.includes('ctc'))) {
+          const m = userText.match(/(?:expected\s*ctc|expected)[:\s]*(\d+(?:\.\d+)?\s*(?:lpa|k|lakhs?)?)/i);
+          res[f] = m ? m[1].trim() : '6 LPA';
+        } else if (fn.includes('location')) {
+          res[f] = /malad/i.test(userText) ? 'Malad' : 'Mumbai';
+        } else if (fn.includes('notice')) {
+          const m = userText.match(/(\d+)\s*(?:days?|months?)/i);
+          res[f] = m ? `${m[1]} days` : '30 days';
+        } else {
+          res[f] = '';
+        }
+      }
+
+      return {
+        content: JSON.stringify(res),
+        confidenceScore: 0.95,
+        finishReason: 'stop'
+      };
+    }
+
     const phoneMatch = systemMsg.match(/Candidate Phone:\s*(\+?\d+)/i) || userText.match(/(\+?\d{10,15})/);
     const candidatePhone = phoneMatch ? phoneMatch[1] : '+919876543210';
 

@@ -10,7 +10,9 @@ import {
   XCircle,
   HelpCircle,
   Bot,
-  Send
+  Send,
+  Sparkles,
+  Clock
 } from 'lucide-react';
 
 export interface WorkflowNodeData {
@@ -87,11 +89,15 @@ export const MessageNode: React.FC<NodeProps> = ({ data, selected }) => {
           <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-700">WhatsApp Message</span>
           <h4 className="text-xs font-semibold text-slate-900 truncate">{nodeData.name || 'Send Message'}</h4>
         </div>
-        {buttons.length > 0 && (
+        {nodeData.config?.templateName ? (
+          <span className="px-1.5 py-0.5 text-[9px] font-bold bg-sky-100 text-sky-800 rounded border border-sky-300">
+            Meta Template
+          </span>
+        ) : buttons.length > 0 ? (
           <span className="px-1.5 py-0.5 text-[9px] font-bold bg-emerald-100 text-emerald-800 rounded">
             Interactive
           </span>
-        )}
+        ) : null}
       </div>
 
       <div className="p-3 space-y-2.5">
@@ -118,9 +124,16 @@ export const MessageNode: React.FC<NodeProps> = ({ data, selected }) => {
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-semibold border border-slate-200">
-            <Send className="w-3 h-3 text-sky-600" />
-            <span>Normal Reply (No Buttons)</span>
+          <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-semibold border border-slate-200">
+            <div className="flex items-center gap-1.5">
+              <Send className="w-3 h-3 text-sky-600" />
+              <span>Normal Text Message</span>
+            </div>
+            {nodeData.config?.waitForReply && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold border border-amber-300">
+                Waits for Reply
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -325,12 +338,51 @@ export const VerifyNode: React.FC<NodeProps> = ({ data, selected }) => {
         ) : (
           <p className="text-[10px] text-slate-400">Sheet: System Default / Mock</p>
         )}
+        {isAppend && nodeData.config?.waitForReply && (
+          <div className="pt-1">
+            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[9px] font-bold border border-amber-300 inline-flex items-center gap-1">
+              ⏳ Waits for reply
+            </span>
+          </div>
+        )}
       </div>
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className={`w-3 h-3 !border-2 !border-white ${isAppend ? '!bg-emerald-600' : '!bg-teal-600'}`}
-      />
+
+      {isAppend ? (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="w-3 h-3 !border-2 !border-white !bg-emerald-600"
+        />
+      ) : (
+        <>
+          {/* Visual Branch Indicators for Verify Node */}
+          <div className="relative h-6 bg-slate-50 rounded-b-xl border-t border-slate-100 flex items-center justify-between px-3 text-[10px] font-bold select-none">
+            <span className="text-emerald-700 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Found (True)
+            </span>
+            <span className="text-rose-700 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Not Found (False)
+            </span>
+          </div>
+
+          {/* Found Socket (Left) */}
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="yes"
+            style={{ left: '25%' }}
+            className="w-3.5 h-3.5 !bg-emerald-600 !border-2 !border-white"
+          />
+          {/* Not Found Socket (Right) */}
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="no"
+            style={{ left: '75%' }}
+            className="w-3.5 h-3.5 !bg-rose-500 !border-2 !border-white"
+          />
+        </>
+      )}
     </div>
   );
 };
@@ -400,7 +452,62 @@ export const HandoffNode: React.FC<NodeProps> = ({ data, selected }) => {
   );
 };
 
-// 8. Terminate Node
+// 8. AI Entity & Form Extractor Node
+export const AIParseNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const nodeData = data as unknown as WorkflowNodeData;
+  const rawFields = nodeData.config?.fields;
+  const fields: string[] = Array.isArray(rawFields)
+    ? rawFields.map((f: any) => (typeof f === 'string' ? f : f.name))
+    : typeof nodeData.config?.fieldsRaw === 'string'
+    ? nodeData.config.fieldsRaw.split(',').map((s: string) => s.trim()).filter(Boolean)
+    : [];
+
+  return (
+    <div
+      className={`min-w-[260px] max-w-[300px] rounded-xl bg-white border-2 shadow-sm transition-all text-slate-800 ${
+        selected ? 'border-violet-600 shadow-md ring-2 ring-violet-500/20' : 'border-violet-200 hover:border-violet-300'
+      }`}
+    >
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="w-3 h-3 !bg-violet-600 !border-2 !border-white"
+      />
+      <div className="flex items-center gap-2 px-3 py-2 bg-violet-50/80 rounded-t-xl border-b border-violet-100">
+        <div className="p-1.5 rounded-lg bg-violet-600 text-white">
+          <Sparkles className="w-3.5 h-3.5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <span className="text-[10px] uppercase font-bold tracking-wider text-violet-700">AI Entity Extractor</span>
+          <h4 className="text-xs font-semibold text-slate-900 truncate">{nodeData.name || 'AI Form / Entity Parser'}</h4>
+        </div>
+        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-violet-100 text-violet-800 rounded">
+          {fields.length} {fields.length === 1 ? 'Field' : 'Fields'}
+        </span>
+      </div>
+      <div className="p-3 text-[11px] text-slate-600 space-y-2">
+        {fields.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {fields.map((field: string, idx: number) => (
+              <span key={idx} className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-violet-100 text-violet-800 rounded border border-violet-200">
+                +{`{{${field}}}`}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-slate-400 italic text-[10px]">No extraction fields configured.</p>
+        )}
+      </div>
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="w-3 h-3 !bg-violet-600 !border-2 !border-white"
+      />
+    </div>
+  );
+};
+
+// 9. Terminate Node
 export const TerminateNode: React.FC<NodeProps> = ({ data, selected }) => {
   const nodeData = data as unknown as WorkflowNodeData;
   return (
@@ -430,15 +537,84 @@ export const TerminateNode: React.FC<NodeProps> = ({ data, selected }) => {
   );
 };
 
+// 10. Wait & Follow-Up Node
+export const DelayNode: React.FC<NodeProps> = ({ data, selected }) => {
+  const nodeData = data as unknown as WorkflowNodeData;
+  const delayValue = nodeData.config?.delayValue ?? nodeData.config?.duration ?? 12;
+  const delayUnit = nodeData.config?.delayUnit || 'hours';
+  const messageText = nodeData.config?.messageTemplate || nodeData.config?.body;
+  const buttons: Array<{ id: string; title: string }> = nodeData.config?.buttons || [];
+
+  return (
+    <div
+      className={`min-w-[260px] max-w-[300px] rounded-xl bg-white border-2 shadow-sm transition-all text-slate-800 ${
+        selected ? 'border-amber-600 shadow-md ring-2 ring-amber-500/20' : 'border-amber-200 hover:border-amber-300'
+      }`}
+    >
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="w-3 h-3 !bg-amber-600 !border-2 !border-white"
+      />
+      <div className="flex items-center gap-2 px-3 py-2 bg-amber-50/80 rounded-t-xl border-b border-amber-100">
+        <div className="p-1.5 rounded-lg bg-amber-600 text-white">
+          <Clock className="w-3.5 h-3.5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <span className="text-[10px] uppercase font-bold tracking-wider text-amber-700">Wait & Follow-Up</span>
+          <h4 className="text-xs font-semibold text-slate-900 truncate">{nodeData.name || 'Scheduled Reminder'}</h4>
+        </div>
+        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-900 rounded border border-amber-300">
+          ⏳ {delayValue} {delayUnit}
+        </span>
+      </div>
+
+      <div className="p-3 space-y-2">
+        {messageText ? (
+          <>
+            <div className="p-2 rounded-lg bg-slate-50 border border-slate-200/80 text-[11px] text-slate-700 font-mono line-clamp-2">
+              {messageText}
+            </div>
+            {buttons.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {buttons.map((btn, idx) => (
+                  <span
+                    key={idx}
+                    className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-100 text-amber-900 border border-amber-200"
+                  >
+                    {btn.title}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="text-[11px] text-slate-500 italic">
+            Pauses workflow for {delayValue} {delayUnit} before proceeding to next step.
+          </p>
+        )}
+      </div>
+
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="w-3 h-3 !bg-amber-600 !border-2 !border-white"
+      />
+    </div>
+  );
+};
+
 export const nodeTypes = {
   trigger: TriggerNode,
   send_message: MessageNode,
   send_text_message: MessageNode,
   condition: DecisionNode,
+  delay: DelayNode,
   update_record: ActionNode,
   verify_data: VerifyNode,
   append_to_sheet: VerifyNode,
   ai_conversation: AINode,
+  ai_parse: AIParseNode,
   human_handoff: HandoffNode,
   terminate: TerminateNode
 };

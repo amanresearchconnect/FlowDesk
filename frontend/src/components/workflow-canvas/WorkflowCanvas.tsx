@@ -42,11 +42,18 @@ import {
   HelpCircle,
   Sparkles,
   CheckCircle2,
-  Send
+  Send,
+  Clock,
+  Maximize2,
+  Minimize2,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
+import { AIWorkflowGeneratorModal } from './AIWorkflowGeneratorModal';
+import { cn } from '../../lib/utils';
 
 interface WorkflowCanvasProps {
   workflow: any;
@@ -192,18 +199,28 @@ const convertWorkflowToGraph = (nodes: any[] = []): { nodes: Node[]; edges: Edge
       });
     }
 
-    // 2. Branch edges (YES / NO / Default)
+    // 2. Branch edges (YES / NO / Default / Found / Not Found)
     if (node.branches && node.branches.length > 0) {
       node.branches.forEach((branch: any, bIdx: number) => {
         const val = branch.conditionValue?.toLowerCase() || '';
-        const isYes = val === 'yes' || val.includes('yes');
-        const isNo = val === 'no' || val.includes('no');
+        const isYes = val === 'yes' || val.includes('yes') || val.includes('true') || val.includes('found');
+        const isNo = val === 'no' || val.includes('no') || val.includes('false') || val.includes('not found');
 
         let strokeColor = '#f59e0b';
         let sourceHandle: string | undefined = undefined;
         let label = branch.conditionValue || 'Condition';
 
-        if (isYes) {
+        if (node.type === 'verify_data') {
+          if (isYes) {
+            strokeColor = '#059669';
+            sourceHandle = 'yes';
+            label = 'Found in Sheet (True)';
+          } else if (isNo) {
+            strokeColor = '#e11d48';
+            sourceHandle = 'no';
+            label = 'Not Found in Sheet (False)';
+          }
+        } else if (isYes) {
           strokeColor = '#059669';
           sourceHandle = 'yes';
           label = 'YES (Button)';
@@ -228,6 +245,40 @@ const convertWorkflowToGraph = (nodes: any[] = []): { nodes: Node[]; edges: Edge
         });
       });
     }
+
+    // Direct Success / Failure edges for verify_data if branches were not explicitly set
+    if (node.type === 'verify_data' && (!node.branches || node.branches.length === 0)) {
+      if (node.config?.onSuccessStepId) {
+        rfEdges.push({
+          id: `e-verify-success-${node.id}-${node.config.onSuccessStepId}`,
+          source: node.id,
+          sourceHandle: 'yes',
+          target: node.config.onSuccessStepId,
+          type: 'smoothstep',
+          animated: true,
+          label: 'Found in Sheet (True)',
+          labelStyle: { fill: '#059669', fontWeight: 700, fontSize: 10 },
+          labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9, rx: 4, ry: 4 },
+          style: { stroke: '#059669', strokeWidth: 2.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#059669' }
+        });
+      }
+      if (node.config?.onFailureStepId) {
+        rfEdges.push({
+          id: `e-verify-failure-${node.id}-${node.config.onFailureStepId}`,
+          source: node.id,
+          sourceHandle: 'no',
+          target: node.config.onFailureStepId,
+          type: 'smoothstep',
+          animated: true,
+          label: 'Not Found in Sheet (False)',
+          labelStyle: { fill: '#e11d48', fontWeight: 700, fontSize: 10 },
+          labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9, rx: 4, ry: 4 },
+          style: { stroke: '#e11d48', strokeWidth: 2.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#e11d48' }
+        });
+      }
+    }
   });
 
   return { nodes: rfNodes, edges: rfEdges };
@@ -248,6 +299,40 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isAIGeneratorOpen, setIsAIGeneratorOpen] = useState(false);
+  const [aiNotification, setAiNotification] = useState<string | null>(null);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(true);
+
+  // Keyboard shortcut: Press Escape to exit Fullscreen Focus Mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFocusMode) {
+        setIsFocusMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFocusMode]);
+
+  const handleApplyAIGeneratedWorkflow = (generatedData: {
+    name?: string;
+    description?: string;
+    explanation?: string;
+    nodes: any[];
+  }) => {
+    if (generatedData.nodes && generatedData.nodes.length > 0) {
+      const graph = convertWorkflowToGraph(generatedData.nodes);
+      setNodes(graph.nodes);
+      setEdges(graph.edges);
+      setSelectedNode(null);
+      setSelectedEdge(null);
+      setAiNotification(
+        `✨ AI generated ${generatedData.nodes.length} nodes! ${generatedData.explanation || 'Review nodes on canvas and click Save Workflow.'}`
+      );
+      setTimeout(() => setAiNotification(null), 10000);
+    }
+  };
 
   const edgeReconnectSuccessful = useRef(true);
 
@@ -318,20 +403,43 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
 
   const onConnect = useCallback(
     (params: Connection) => {
+      const sourceNode = nodes.find((n) => n.id === params.source);
+      let label: string | undefined = undefined;
+      let strokeColor = '#059669';
+
+      if (sourceNode?.type === 'verify_data') {
+        if (params.sourceHandle === 'yes') {
+          label = 'Found in Sheet (True)';
+          strokeColor = '#059669';
+        } else if (params.sourceHandle === 'no') {
+          label = 'Not Found in Sheet (False)';
+          strokeColor = '#e11d48';
+        }
+      } else if (params.sourceHandle === 'yes') {
+        label = 'YES (Button)';
+        strokeColor = '#059669';
+      } else if (params.sourceHandle === 'no') {
+        label = 'NO (Button)';
+        strokeColor = '#e11d48';
+      }
+
       setEdges((eds) =>
         addEdge(
           {
             ...params,
             type: 'removable',
             animated: true,
-            style: { stroke: '#059669', strokeWidth: 2 },
-            markerEnd: { type: MarkerType.ArrowClosed, color: '#059669' }
+            label,
+            labelStyle: label ? { fill: strokeColor, fontWeight: 700, fontSize: 10 } : undefined,
+            labelBgStyle: label ? { fill: '#ffffff', fillOpacity: 0.9, rx: 4, ry: 4 } : undefined,
+            style: { stroke: strokeColor, strokeWidth: 2.5 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor }
           },
           eds
         )
       );
     },
-    []
+    [nodes]
   );
 
   const onNodeClick = (_: React.MouseEvent, node: Node) => {
@@ -398,6 +506,28 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
     } else if (type === 'append_to_sheet') {
       baseConfig.sheetName = 'Responses';
       baseConfig.integrationType = 'google_sheets';
+    } else if (type === 'ai_parse') {
+      baseConfig.sourceVariable = 'lastReply';
+      baseConfig.fields = [
+        { name: 'working', description: 'Currently working or not (Yes/No)' },
+        { name: 'experience', description: 'Years of work experience' },
+        { name: 'age', description: 'Age of candidate' },
+        { name: 'Excel', description: 'Excel knowledge level' },
+        { name: 'current CTC', description: 'Current salary/CTC' },
+        { name: 'expected CTC', description: 'Expected salary/CTC' },
+        { name: 'location', description: 'Residential location or city' },
+        { name: 'notice period', description: 'Notice period in days or months' }
+      ];
+    } else if (type === 'delay') {
+      baseConfig.delayValue = 12;
+      baseConfig.delayUnit = 'hours';
+      baseConfig.messageTemplate = 'Good morning {{firstName}}, reminder for your interview today! Are you on your way?';
+      baseConfig.buttons = [
+        { id: 'btn_yes', title: 'Yes, On My Way' },
+        { id: 'btn_reschedule', title: 'Need to Reschedule' }
+      ];
+      baseConfig.cancelOnReply = true;
+      baseConfig.waitForReply = true;
     }
 
     const newNode: Node = {
@@ -414,6 +544,11 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             ? [
                 { conditionType: 'equals', conditionValue: 'YES', targetStepId: '' },
                 { conditionType: 'equals', conditionValue: 'NO', targetStepId: '' }
+              ]
+            : type === 'verify_data'
+            ? [
+                { conditionType: 'equals', conditionValue: 'true, yes, verified, found', targetStepId: '' },
+                { conditionType: 'equals', conditionValue: 'false, no, not found, unverified', targetStepId: '' }
               ]
             : []
       }
@@ -445,19 +580,23 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         const configuredNo = (node.data as any).config?.noValue || 'NO, Not Interested, Decline';
 
         if (edge.sourceHandle === 'yes') {
+          const yesVal = node.type === 'verify_data' ? 'true, yes, verified, found' : configuredYes;
           branches.push({
             conditionType: 'equals',
-            conditionValue: configuredYes,
+            conditionValue: yesVal,
             targetStepId: edge.target
           });
           nodeConfig.trueStepId = edge.target;
+          nodeConfig.onSuccessStepId = edge.target;
         } else if (edge.sourceHandle === 'no') {
+          const noVal = node.type === 'verify_data' ? 'false, no, not found, unverified' : configuredNo;
           branches.push({
             conditionType: 'equals',
-            conditionValue: configuredNo,
+            conditionValue: noVal,
             targetStepId: edge.target
           });
           nodeConfig.falseStepId = edge.target;
+          nodeConfig.onFailureStepId = edge.target;
         } else if (edge.label && typeof edge.label === 'string') {
           branches.push({
             conditionType: 'equals',
@@ -496,10 +635,16 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0 flex-1 bg-slate-900/5 rounded-2xl border border-slate-200 overflow-hidden relative shadow-xs">
+    <div
+      className={cn(
+        isFocusMode
+          ? 'fixed inset-0 z-40 w-screen h-screen flex flex-col bg-slate-100 overflow-hidden shadow-2xl animate-in fade-in duration-150'
+          : 'flex flex-col h-full min-h-0 flex-1 bg-slate-900/5 rounded-2xl border border-slate-200 overflow-hidden relative shadow-xs'
+      )}
+    >
       {/* Canvas Top Bar */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 z-10">
-        <div className="flex items-center gap-2">
+      <div className="shrink-0 flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 z-10 shadow-2xs">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-bold text-sm text-slate-900 flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-emerald-600" />
             Visual Workflow Designer
@@ -507,6 +652,11 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           <Badge variant="slate" className="text-xs">
             {nodes.length} nodes · {edges.length} connections
           </Badge>
+          {isFocusMode && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full shadow-2xs animate-fade-in">
+              🎯 Fullscreen Focus Active
+            </span>
+          )}
           {saveSuccess && (
             <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 animate-fade-in">
               <CheckCircle2 className="w-3.5 h-3.5" /> Saved & Deployed!
@@ -525,9 +675,20 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               title="Delete selected node (or press Backspace / Delete)"
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-              <span>Delete Node</span>
+              <span className="hidden sm:inline">Delete Node</span>
             </Button>
           )}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsAIGeneratorOpen(true)}
+            className="flex items-center gap-1.5 text-xs text-purple-700 border-purple-300 hover:bg-purple-50 font-bold shadow-2xs"
+            title="Upload an SOP document or paste scripts to auto-generate this workflow with AI"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+            <span className="hidden sm:inline">Generate with AI</span>
+          </Button>
 
           <Button
             variant="outline"
@@ -536,7 +697,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             className="flex items-center gap-1.5 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50"
           >
             <Play className="w-3.5 h-3.5 fill-emerald-600 text-emerald-600" />
-            Test Live on Mobile
+            <span className="hidden sm:inline">Test Live on Mobile</span>
           </Button>
 
           <Button
@@ -549,15 +710,74 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             <Save className="w-3.5 h-3.5" />
             {isSaving ? 'Saving...' : 'Save Workflow'}
           </Button>
+
+          {/* Fullscreen / Focus Mode Toggle Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFocusMode(!isFocusMode)}
+            className={cn(
+              'flex items-center gap-1.5 text-xs font-semibold transition-all',
+              isFocusMode
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600 shadow-sm'
+                : 'text-slate-700 hover:text-slate-900 border-slate-300 hover:bg-slate-100'
+            )}
+            title={
+              isFocusMode
+                ? 'Exit Fullscreen Focus Mode (Press Esc or Click)'
+                : 'Full Screen Focus Mode (Hide sidebars & headers for maximum workspace)'
+            }
+          >
+            {isFocusMode ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5" />
+                <span>Exit Focus</span>
+                <kbd className="hidden sm:inline-block text-[10px] bg-indigo-500 text-white px-1.5 py-0.2 rounded font-mono ml-0.5">
+                  Esc
+                </kbd>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-slate-600" />
+                <span>Focus Mode</span>
+              </>
+            )}
+          </Button>
         </div>
       </div>
 
+      {aiNotification && (
+        <div className="bg-gradient-to-r from-purple-50 via-emerald-50 to-purple-50 border-b border-purple-200 px-4 py-2 flex items-center justify-between text-xs text-purple-950 animate-fade-in shrink-0">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+            <span className="font-medium">{aiNotification}</span>
+          </div>
+          <button
+            onClick={() => setAiNotification(null)}
+            className="text-purple-600 hover:text-purple-900 p-0.5 rounded transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 flex relative min-h-0 overflow-hidden w-full">
-        {/* Left Toolbar / Node Palette */}
-        <div className="w-56 bg-slate-50 border-r border-slate-200 p-3 z-10 space-y-3 overflow-y-auto">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-            Add Workflow Node
-          </span>
+        {/* Left Toolbar / Node Palette (Collapsible) */}
+        {isPaletteOpen ? (
+          <div className="w-56 bg-slate-50 border-r border-slate-200 p-3 z-10 space-y-3 overflow-y-auto shrink-0 animate-in slide-in-from-left-2 duration-150">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Add Nodes
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsPaletteOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded hover:bg-slate-200 transition-colors"
+                title="Collapse node palette for maximum canvas workspace"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
           <div className="space-y-1.5">
             <button
@@ -652,6 +872,32 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             </button>
 
             <button
+              onClick={() => handleAddNode('ai_parse', 'AI Form / Entity Extractor')}
+              className="w-full text-left p-2.5 rounded-xl bg-white border border-slate-200 hover:border-violet-500 hover:shadow-xs transition-all flex items-center gap-2 text-xs font-semibold text-slate-800 group"
+            >
+              <div className="p-1 rounded bg-violet-100 text-violet-700 group-hover:bg-violet-600 group-hover:text-white transition-colors">
+                <Sparkles className="w-3.5 h-3.5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="block truncate">AI Entity Extractor</span>
+                <span className="text-[10px] text-slate-500 font-normal">Extract Form Data</span>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleAddNode('delay', 'Wait & Follow-Up')}
+              className="w-full text-left p-2.5 rounded-xl bg-white border border-slate-200 hover:border-amber-500 hover:shadow-xs transition-all flex items-center gap-2 text-xs font-semibold text-slate-800 group"
+            >
+              <div className="p-1 rounded bg-amber-100 text-amber-700 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                <Clock className="w-3.5 h-3.5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="block truncate">Wait & Follow-Up</span>
+                <span className="text-[10px] text-slate-500 font-normal">Timed Nudge & Reminder</span>
+              </div>
+            </button>
+
+            <button
               onClick={() => handleAddNode('human_handoff', 'Escalate to Team Inbox')}
               className="w-full text-left p-2.5 rounded-xl bg-white border border-slate-200 hover:border-amber-400 hover:shadow-xs transition-all flex items-center gap-2 text-xs font-semibold text-slate-800 group"
             >
@@ -683,9 +929,22 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
             <p>Click any node to customize its message, buttons, or rules.</p>
           </div>
         </div>
+        ) : null}
 
         {/* Main Canvas Workspace */}
-        <div className="flex-1 h-full bg-slate-50/50">
+        <div className="flex-1 h-full bg-slate-50/50 relative">
+          {!isPaletteOpen && (
+            <button
+              type="button"
+              onClick={() => setIsPaletteOpen(true)}
+              className="absolute left-3 top-3 z-20 px-2.5 py-1.5 rounded-lg bg-white/95 backdrop-blur-xs border border-slate-300 shadow-md text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-slate-900 flex items-center gap-1.5 transition-all hover:scale-105"
+              title="Expand Node Palette"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Add Nodes</span>
+              <ChevronRight className="w-3 h-3 text-slate-400" />
+            </button>
+          )}
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -715,6 +974,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                 if (n.type === 'send_message') return '#10b981';
                 if (n.type === 'condition') return '#f59e0b';
                 if (n.type === 'trigger') return '#8b5cf6';
+                if (n.type === 'delay') return '#d97706';
                 return '#94a3b8';
               }}
             />
@@ -762,8 +1022,70 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               {/* 1. WhatsApp Message Node (Interactive Buttons & Normal Reply) */}
               {selectedNode.type === 'send_message' && (
                 <div className="space-y-3.5 pt-1">
+                  {/* Meta Template Configuration (For Cold Broadcasts / Outreach) */}
+                  <div className="p-2.5 rounded-lg bg-sky-50/70 border border-sky-200/80 space-y-2">
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean((selectedNode.data as any).config?.templateName)}
+                        onChange={(e) => {
+                          const newConfig = {
+                            ...(selectedNode.data as any).config,
+                            templateName: e.target.checked ? 'candidate_screening_v1_' : '',
+                            templateLanguage: e.target.checked ? 'en' : ''
+                          };
+                          handleUpdateSelectedNode({ config: newConfig });
+                        }}
+                        className="mt-0.5 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                      />
+                      <div>
+                        <span className="text-xs font-semibold text-slate-800">
+                          Use Approved Meta Template
+                        </span>
+                        <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                          Required when broadcasting cold outreach campaigns to contacts outside the 24h window.
+                        </p>
+                      </div>
+                    </label>
+
+                    {Boolean((selectedNode.data as any).config?.templateName) && (
+                      <div className="pt-1.5 space-y-1.5 border-t border-sky-200/60">
+                        <div>
+                          <label className="text-[11px] font-semibold text-sky-900 block">Template Name (from WhatsApp Manager)</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. candidate_screening_v1_"
+                            value={(selectedNode.data as any).config?.templateName || ''}
+                            onChange={(e) => {
+                              handleUpdateSelectedNode({
+                                config: { ...(selectedNode.data as any).config, templateName: e.target.value }
+                              });
+                            }}
+                            className="w-full px-2.5 py-1 text-xs bg-white border border-sky-300 rounded font-mono text-sky-900 font-semibold"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <label className="text-[10px] font-semibold text-sky-900 block">Language Code</label>
+                            <input
+                              type="text"
+                              placeholder="en"
+                              value={(selectedNode.data as any).config?.templateLanguage || 'en'}
+                              onChange={(e) => {
+                                handleUpdateSelectedNode({
+                                  config: { ...(selectedNode.data as any).config, templateLanguage: e.target.value }
+                                });
+                              }}
+                              className="w-full px-2.5 py-1 text-xs bg-white border border-sky-300 rounded font-mono text-sky-900"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Message Body</label>
+                    <label className="text-xs font-semibold text-slate-700">Message Body (or Template Preview)</label>
                     <textarea
                       rows={3}
                       value={(selectedNode.data as any).config?.messageTemplate || (selectedNode.data as any).config?.body || ''}
@@ -882,6 +1204,34 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                         </p>
                       </div>
                     )}
+                  </div>
+
+                  {/* Wait for Candidate Reply Toggle */}
+                  <div className="pt-2 border-t border-slate-200">
+                    <div className="p-2.5 rounded-lg bg-amber-50/60 border border-amber-200/80">
+                      <label className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={(selectedNode.data as any).config?.waitForReply === true}
+                          onChange={(e) => {
+                            const newConfig = {
+                              ...(selectedNode.data as any).config,
+                              waitForReply: e.target.checked
+                            };
+                            handleUpdateSelectedNode({ config: newConfig });
+                          }}
+                          className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <div>
+                          <span className="text-xs font-semibold text-slate-800">
+                            Wait for candidate reply before advancing
+                          </span>
+                          <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                            Pauses the workflow after sending this message until the candidate sends a response. Required when asking questions.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1014,7 +1364,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
               {selectedNode.type === 'verify_data' && (
                 <div className="space-y-3 pt-2 text-xs">
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Google Sheet URL or ID</label>
+                    <label className="text-xs font-semibold text-slate-700">Google Sheet URL</label>
                     <input
                       type="text"
                       placeholder="https://docs.google.com/spreadsheets/d/.../edit"
@@ -1027,29 +1377,16 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
                     />
                     <p className="text-[10px] text-slate-500">
-                      Paste the Google Sheets link directly. Leave empty for default/mock.
+                      Direct Google Sheets share link. Shared with Service Account email.
                     </p>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Integration Provider</label>
-                    <select
-                      value={(selectedNode.data as any).config?.provider || 'google_sheets'}
-                      onChange={(e) => {
-                        handleUpdateSelectedNode({
-                          config: { ...(selectedNode.data as any).config, provider: e.target.value }
-                        });
-                      }}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
-                    >
-                      <option value="google_sheets">Google Sheets API v4</option>
-                      <option value="microsoft_excel">Microsoft Excel Online (Graph API)</option>
-                    </select>
-                  </div>
+
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-slate-700">Sheet / Tab Name</label>
                     <input
                       type="text"
-                      value={(selectedNode.data as any).config?.sheetName || 'Responses'}
+                      placeholder="e.g. response or Sheet1"
+                      value={(selectedNode.data as any).config?.sheetName || 'response'}
                       onChange={(e) => {
                         handleUpdateSelectedNode({
                           config: { ...(selectedNode.data as any).config, sheetName: e.target.value }
@@ -1058,120 +1395,261 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
                     />
                   </div>
+
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Match Field</label>
-                    <input
-                      type="text"
-                      value={(selectedNode.data as any).config?.matchField || 'phone'}
+                    <label className="text-xs font-semibold text-slate-700">Candidate Input & Extraction</label>
+                    <select
+                      value={(selectedNode.data as any).config?.extractionMode || 'auto_detect_reply'}
+                      onChange={(e) => {
+                        handleUpdateSelectedNode({
+                          config: { ...(selectedNode.data as any).config, extractionMode: e.target.value }
+                        });
+                      }}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
+                    >
+                      <option value="auto_detect_reply">Wait for Candidate Reply (Auto-detect Phone, Email, or Survey ID)</option>
+                      <option value="whatsapp_phone_instant">Check WhatsApp Phone Immediately (No waiting)</option>
+                      <option value="phone_from_reply">Extract Phone Number from Candidate Reply</option>
+                      <option value="survey_id_from_reply">Extract Survey ID / Code from Candidate Reply</option>
+                      <option value="email_from_reply">Extract Email from Candidate Reply</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700">Column to Match in Sheet</label>
+                    <select
+                      value={(selectedNode.data as any).config?.matchField || 'auto'}
                       onChange={(e) => {
                         handleUpdateSelectedNode({
                           config: { ...(selectedNode.data as any).config, matchField: e.target.value }
                         });
                       }}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
-                    />
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
+                    >
+                      <option value="auto">Auto-Detect Header (Phone / Survey ID / Email)</option>
+                      <option value="phone">Phone Column</option>
+                      <option value="surveyId">Survey ID / Code Column</option>
+                      <option value="email">Email Column</option>
+                    </select>
                   </div>
-                  <div className="p-2.5 rounded-lg bg-teal-50 border border-teal-200 text-[10px] text-teal-800 space-y-1">
-                    <p className="font-bold flex items-center gap-1">
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-teal-700" />
-                      Two-Way Spreadsheet Reading
+
+                  {/* Direct Branching Sockets Explainer */}
+                  <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 text-xs text-teal-900 space-y-2">
+                    <div className="font-bold flex items-center gap-1.5 text-teal-800">
+                      <GitBranch className="w-4 h-4 text-teal-700" />
+                      Direct Decision Sockets (No extra condition node!)
+                    </div>
+                    <p className="text-[11px] text-teal-800/90 leading-relaxed">
+                      Connect arrows directly from this node's two bottom handles:
                     </p>
-                    <p>Reads candidate responses by matching candidate phone or ID in your cloud spreadsheet.</p>
+                    <div className="space-y-1 text-[11px]">
+                      <div className="flex items-center gap-1.5 font-semibold text-emerald-800 bg-white/90 p-1.5 rounded border border-emerald-200">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                        <span>Found (True): Connect to Success message or Append Sheet</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 font-semibold text-rose-800 bg-white/90 p-1.5 rounded border border-rose-200">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0"></span>
+                        <span>Not Found (False): Connect to Retry or Human Agent</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* 4. Append to Spreadsheet Node */}
-              {selectedNode.type === 'append_to_sheet' && (
-                <div className="space-y-3 pt-2 text-xs">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Google Sheet URL or ID</label>
-                    <input
-                      type="text"
-                      placeholder="https://docs.google.com/spreadsheets/d/.../edit"
-                      value={(selectedNode.data as any).config?.spreadsheetUrl || ''}
-                      onChange={(e) => {
-                        handleUpdateSelectedNode({
-                          config: { ...(selectedNode.data as any).config, spreadsheetUrl: e.target.value }
-                        });
-                      }}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Paste the Google Sheets link directly. Leave empty for default/mock.
-                    </p>
+              {/* 4. Append / Write to Spreadsheet Node */}
+              {selectedNode.type === 'append_to_sheet' && (() => {
+                const config = (selectedNode.data as any).config || {};
+                const mode = config.mode || 'upsert';
+                const lookupKey = config.lookupKey || 'phone';
+                const mappings: Array<{ sheetColumn: string; value: string }> =
+                  Array.isArray(config.columnMappings) && config.columnMappings.length > 0
+                    ? config.columnMappings
+                    : [
+                        { sheetColumn: 'Name', value: '{{firstName}} {{lastName}}' },
+                        { sheetColumn: 'Phone', value: '{{phone}}' },
+                        { sheetColumn: 'Email', value: '{{candidateEmail}}' },
+                        { sheetColumn: 'Status', value: 'Verified' },
+                        { sheetColumn: 'Survey-ID', value: '{{verifiedSurveyId}}' },
+                        { sheetColumn: 'Timestamp', value: '{{$timestamp}}' }
+                      ];
+
+                const updateMappings = (newMappings: Array<{ sheetColumn: string; value: string }>) => {
+                  handleUpdateSelectedNode({
+                    config: { ...config, columnMappings: newMappings }
+                  });
+                };
+
+                return (
+                  <div className="space-y-3.5 pt-2 text-xs">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-slate-700">Google Sheet URL or ID</label>
+                      <input
+                        type="text"
+                        placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                        value={config.spreadsheetUrl || ''}
+                        onChange={(e) => {
+                          handleUpdateSelectedNode({
+                            config: { ...config, spreadsheetUrl: e.target.value }
+                          });
+                        }}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        Paste the full Google Sheets link here.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-slate-700">Sheet / Tab Name</label>
+                      <input
+                        type="text"
+                        value={config.sheetName || 'Responses'}
+                        onChange={(e) => {
+                          handleUpdateSelectedNode({
+                            config: { ...config, sheetName: e.target.value }
+                          });
+                        }}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                      />
+                    </div>
+
+                    {/* Wait for Candidate Reply Toggle */}
+                    <div className="p-2.5 rounded-lg bg-amber-50/60 border border-amber-200/80">
+                      <label className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={config.waitForReply === true}
+                          onChange={(e) => {
+                            handleUpdateSelectedNode({
+                              config: { ...config, waitForReply: e.target.checked }
+                            });
+                          }}
+                          className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <div>
+                          <span className="text-xs font-semibold text-slate-800">
+                            Wait for candidate reply before writing to sheet
+                          </span>
+                          <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                            Pauses the workflow until candidate answers are received, preventing blank rows in Google Sheets.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-slate-700">Operation Mode</label>
+                      <select
+                        value={mode}
+                        onChange={(e) => {
+                          handleUpdateSelectedNode({
+                            config: { ...config, mode: e.target.value }
+                          });
+                        }}
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-medium"
+                      >
+                        <option value="upsert">Smart Upsert: Update if exists, otherwise Append (Safest)</option>
+                        <option value="append">Append Only: Always add new row at bottom</option>
+                        <option value="update">Update Only: Update existing candidate row</option>
+                      </select>
+                    </div>
+
+                    {mode !== 'append' && (
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-700">Lookup Key (Find candidate row by)</label>
+                        <select
+                          value={lookupKey}
+                          onChange={(e) => {
+                            handleUpdateSelectedNode({
+                              config: { ...config, lookupKey: e.target.value }
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
+                        >
+                          <option value="phone">Candidate Phone Number (Columns matching Phone / Mobile)</option>
+                          <option value="surveyId">Survey ID / Verification Code</option>
+                          <option value="email">Email Address</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Visual Column Mapping Table */}
+                    <div className="space-y-2 pt-1 border-t border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800">Column Mapping (Sheet ➔ Value)</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateMappings([...mappings, { sheetColumn: 'New Column', value: '{{phone}}' }]);
+                          }}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add Column
+                        </button>
+                      </div>
+
+                      <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-0.5">
+                        {mappings.map((m, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                            <input
+                              type="text"
+                              title="Sheet Column Header Name"
+                              placeholder="Header Name"
+                              value={m.sheetColumn}
+                              onChange={(e) => {
+                                const next = [...mappings];
+                                next[idx].sheetColumn = e.target.value;
+                                updateMappings(next);
+                              }}
+                              className="w-[38%] px-2 py-1 text-[11px] bg-white border border-slate-300 rounded font-semibold text-slate-800"
+                            />
+                            <span className="text-slate-400 font-bold text-[10px]">➔</span>
+                            <input
+                              type="text"
+                              title="Value or Variable to write"
+                              placeholder="{{phone}}"
+                              value={m.value}
+                              onChange={(e) => {
+                                const next = [...mappings];
+                                next[idx].value = e.target.value;
+                                updateMappings(next);
+                              }}
+                              className="flex-1 min-w-0 px-2 py-1 text-[11px] bg-white border border-slate-300 rounded font-mono text-emerald-800"
+                            />
+                            {mappings.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateMappings(mappings.filter((_, i) => i !== idx));
+                                }}
+                                className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-white"
+                                title="Remove Column"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200 text-[10px] text-emerald-900 space-y-1">
+                        <p className="font-bold flex items-center gap-1 text-emerald-800">
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                          {mode === 'upsert' ? 'Smart Upsert Mode' : mode === 'update' ? 'In-Place Update Mode' : 'Append Row Mode'}
+                        </p>
+                        <p className="text-[10px] text-emerald-800/90 leading-tight">
+                          {mode === 'upsert'
+                            ? 'If the candidate is already in the sheet, their existing row is updated in place. If new, a row is appended at the bottom.'
+                            : mode === 'update'
+                            ? 'Searches for the candidate by their lookup key and modifies only the specified columns without creating duplicates.'
+                            : 'Appends a brand new row at the bottom of the sheet for every completed run.'}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Integration Provider</label>
-                    <select
-                      value={(selectedNode.data as any).config?.integrationType || 'google_sheets'}
-                      onChange={(e) => {
-                        handleUpdateSelectedNode({
-                          config: { ...(selectedNode.data as any).config, integrationType: e.target.value }
-                        });
-                      }}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
-                    >
-                      <option value="google_sheets">Google Sheets API v4</option>
-                      <option value="microsoft_excel">Microsoft Excel Online (Graph API)</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Sheet / Tab Name</label>
-                    <input
-                      type="text"
-                      value={(selectedNode.data as any).config?.sheetName || 'Responses'}
-                      onChange={(e) => {
-                        handleUpdateSelectedNode({
-                          config: { ...(selectedNode.data as any).config, sheetName: e.target.value }
-                        });
-                      }}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">Custom Columns Mapping (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="{{Name}}, {{Phone}}, {{Email}}, {{Survey-ID}}"
-                      value={
-                        (selectedNode.data as any).config?.customColumnsRaw !== undefined
-                          ? (selectedNode.data as any).config.customColumnsRaw
-                          : Array.isArray((selectedNode.data as any).config?.customColumns)
-                          ? (selectedNode.data as any).config.customColumns.join(', ')
-                          : (selectedNode.data as any).config?.customColumns || ''
-                      }
-                      onChange={(e) => {
-                        const customColumnsRaw = e.target.value;
-                        const cols = customColumnsRaw.split(',').map((s) => s.trim()).filter(Boolean);
-                        handleUpdateSelectedNode({
-                          config: {
-                            ...(selectedNode.data as any).config,
-                            customColumns: cols.length > 0 ? cols : undefined,
-                            customColumnsRaw
-                          }
-                        });
-                      }}
-                      onBlur={() => {
-                        const cfg = { ...(selectedNode.data as any).config };
-                        delete cfg.customColumnsRaw;
-                        handleUpdateSelectedNode({ config: cfg });
-                      }}
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Comma-separated column values. Defaults to [Name, Phone, Survey Answers, Status, Timestamp].
-                    </p>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-800 space-y-1">
-                    <p className="font-bold flex items-center gap-1">
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-                      Live Spreadsheet Writing
-                    </p>
-                    <p>Appends candidate row: [Name, Phone, Survey Answers, Status, Verified Timestamp].</p>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* 5. Update Contact Record Node */}
               {selectedNode.type === 'update_record' && (
@@ -1206,6 +1684,515 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                   <span className="text-[10px] text-slate-400 block">Comma-separated tags (e.g. interested, screened)</span>
                 </div>
               )}
+
+              {/* 5b. AI Entity & Form Extractor Node */}
+              {selectedNode.type === 'ai_parse' && (() => {
+                const config = (selectedNode.data as any).config || {};
+                const rawFields = config.fields;
+                const fields: Array<{ name: string; description?: string }> = Array.isArray(rawFields)
+                  ? rawFields.map((f: any) => (typeof f === 'string' ? { name: f, description: '' } : f))
+                  : [
+                      { name: 'working', description: 'Currently working or not' },
+                      { name: 'experience', description: 'Years of experience' },
+                      { name: 'age', description: 'Age' },
+                      { name: 'Excel', description: 'Excel knowledge' },
+                      { name: 'current CTC', description: 'Current CTC' },
+                      { name: 'expected CTC', description: 'Expected CTC' },
+                      { name: 'location', description: 'Location' },
+                      { name: 'notice period', description: 'Notice period' }
+                    ];
+
+                const updateFields = (newFields: Array<{ name: string; description?: string }>) => {
+                  handleUpdateSelectedNode({
+                    config: { ...config, fields: newFields }
+                  });
+                };
+
+                return (
+                  <div className="space-y-3.5 pt-2 text-xs">
+                    <div className="p-2.5 rounded-lg bg-violet-50/70 border border-violet-200 text-violet-900 space-y-1">
+                      <p className="font-bold flex items-center gap-1.5 text-violet-800">
+                        <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                        Multilingual Form & Entity Extractor
+                      </p>
+                      <p className="text-[10px] text-violet-800/80 leading-tight">
+                        Uses AI to extract structured answers from free-form candidate replies (English, Hindi, Hinglish, messy paragraphs) and stores them as workflow variables.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-slate-700">Source Variable</label>
+                      <input
+                        type="text"
+                        value={config.sourceVariable || 'lastReply'}
+                        onChange={(e) => {
+                          handleUpdateSelectedNode({
+                            config: { ...config, sourceVariable: e.target.value }
+                          });
+                        }}
+                        placeholder="lastReply"
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                      />
+                      <span className="text-[10px] text-slate-400 block">Default: lastReply (incoming WhatsApp text)</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800">
+                          Target Fields to Extract ({fields.length})
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateFields([...fields, { name: `field_${fields.length + 1}`, description: '' }]);
+                          }}
+                          className="px-2 py-0.5 text-[11px] font-semibold text-violet-700 bg-violet-100 hover:bg-violet-200 rounded flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add Field
+                        </button>
+                      </div>
+
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                        {fields.map((field, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 p-1.5 rounded-lg bg-slate-50 border border-slate-200">
+                            <span className="text-[10px] font-mono text-violet-600 shrink-0 font-bold">
+                              {`{{`}
+                            </span>
+                            <input
+                              type="text"
+                              value={field.name}
+                              onChange={(e) => {
+                                const next = [...fields];
+                                next[idx] = { ...next[idx], name: e.target.value };
+                                updateFields(next);
+                              }}
+                              placeholder="fieldName"
+                              className="flex-1 min-w-0 px-2 py-1 text-[11px] bg-white border border-slate-300 rounded font-mono font-medium text-slate-900"
+                            />
+                            <span className="text-[10px] font-mono text-violet-600 shrink-0 font-bold">
+                              {`}}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateFields(fields.filter((_, i) => i !== idx));
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-white"
+                              title="Remove Field"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-slate-500 italic">
+                        Each field becomes available in Google Sheets as {'{{fieldName}}'}.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-slate-700">Custom Prompt Instructions (Optional)</label>
+                      <textarea
+                        rows={2}
+                        value={config.instructions || ''}
+                        onChange={(e) => {
+                          handleUpdateSelectedNode({
+                            config: { ...config, instructions: e.target.value }
+                          });
+                        }}
+                        placeholder="e.g. For Excel knowledge, normalize to Basic, Intermediate, or Advanced."
+                        className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 5c. Wait & Follow-Up (Nudge) Node */}
+              {selectedNode.type === 'delay' && (() => {
+                const config = (selectedNode.data as any).config || {};
+                const delayValue = config.delayValue ?? config.duration ?? 12;
+                const delayUnit = config.delayUnit || 'hours';
+                const buttons: Array<{ id: string; title: string }> = config.buttons || [];
+                const cancelOnReply = config.cancelOnReply === true;
+                const waitForReply = config.waitForReply === true;
+
+                const setPreset = (val: number, unit: string) => {
+                  handleUpdateSelectedNode({
+                    config: {
+                      ...config,
+                      delayValue: val,
+                      delayUnit: unit
+                    }
+                  });
+                };
+
+                return (
+                  <div className="space-y-4 pt-1 text-xs">
+                    {/* Header Banner */}
+                    <div className="p-2.5 rounded-lg bg-amber-50/80 border border-amber-200 text-amber-950 space-y-1">
+                      <p className="font-bold flex items-center gap-1.5 text-amber-800">
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                        Wait & Automated Follow-Up (Nudge)
+                      </p>
+                      <p className="text-[10px] text-amber-800/80 leading-tight">
+                        Pauses workflow execution for a set duration, then automatically dispatches a WhatsApp reminder.
+                      </p>
+                    </div>
+
+                    {/* Delay Duration & Unit */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-800">Wait Duration</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          value={delayValue}
+                          onChange={(e) => {
+                            const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                            handleUpdateSelectedNode({
+                              config: { ...config, delayValue: val }
+                            });
+                          }}
+                          className="w-1/2 px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <select
+                          value={delayUnit}
+                          onChange={(e) => {
+                            handleUpdateSelectedNode({
+                              config: { ...config, delayUnit: e.target.value }
+                            });
+                          }}
+                          className="w-1/2 px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        >
+                          <option value="minutes">Minutes</option>
+                          <option value="hours">Hours</option>
+                          <option value="days">Days</option>
+                        </select>
+                      </div>
+
+                      {/* Quick Presets */}
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        <span className="text-[10px] text-slate-400 self-center mr-1">Presets:</span>
+                        <button
+                          type="button"
+                          onClick={() => setPreset(15, 'minutes')}
+                          className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 rounded border border-slate-200 transition-colors"
+                        >
+                          15m
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreset(1, 'hours')}
+                          className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 rounded border border-slate-200 transition-colors"
+                        >
+                          1h
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreset(8, 'hours')}
+                          className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 rounded border border-slate-200 transition-colors"
+                        >
+                          8h
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreset(12, 'hours')}
+                          className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 rounded border border-slate-200 transition-colors"
+                        >
+                          12h
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreset(20, 'hours')}
+                          className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 rounded border border-slate-200 transition-colors"
+                        >
+                          20h
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreset(24, 'hours')}
+                          className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800 rounded border border-slate-200 transition-colors"
+                        >
+                          24h
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Follow-up Message Textarea */}
+                    <div className="space-y-1 pt-1 border-t border-slate-200">
+                      <label className="text-xs font-semibold text-slate-700">Follow-Up Message Text</label>
+                      <textarea
+                        rows={3}
+                        value={config.messageTemplate || config.body || ''}
+                        onChange={(e) => {
+                          handleUpdateSelectedNode({
+                            config: { ...config, messageTemplate: e.target.value }
+                          });
+                        }}
+                        placeholder="Good morning {{firstName}}, reminder for your interview today! Are you on your way?"
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                      <span className="text-[10px] text-slate-400 block">
+                        Supports variables: {'{{firstName}}'}, {'{{role}}'}, {'{{company}}'}
+                      </span>
+                    </div>
+
+                    {/* Interactive Quick-Reply Buttons */}
+                    <div className="space-y-2.5 pt-2 border-t border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
+                          Quick-Reply Buttons ({buttons.length}/3)
+                        </label>
+                        {buttons.length < 3 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newBtn = {
+                                id: `btn_${buttons.length + 1}`,
+                                title: buttons.length === 0 ? 'Yes, On My Way' : 'Need to Reschedule'
+                              };
+                              handleUpdateSelectedNode({
+                                config: { ...config, buttons: [...buttons, newBtn] }
+                              });
+                            }}
+                            className="px-2 py-1 text-[11px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                          >
+                            <Plus className="w-3 h-3" /> Add Button
+                          </button>
+                        )}
+                      </div>
+
+                      {buttons.length === 0 ? (
+                        <p className="text-[10px] text-slate-500 italic">
+                          No quick-reply buttons added. Will send as a plain WhatsApp text message.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {buttons.map((btn, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 p-2 rounded-lg bg-amber-50/70 border border-amber-200"
+                            >
+                              <div className="w-2 h-2 rounded-full bg-amber-600 shrink-0" />
+                              <input
+                                type="text"
+                                maxLength={20}
+                                value={btn.title}
+                                onChange={(e) => {
+                                  const updated = [...buttons];
+                                  updated[idx] = { ...updated[idx], title: e.target.value };
+                                  handleUpdateSelectedNode({
+                                    config: { ...config, buttons: updated }
+                                  });
+                                }}
+                                placeholder={`Button ${idx + 1}`}
+                                className="flex-1 px-2.5 py-1 text-xs bg-white border border-amber-300 rounded text-slate-900 font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              />
+                              <span className="text-[9px] font-mono text-slate-400 shrink-0">{btn.title.length}/20</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const filtered = buttons.filter((_, bIdx) => bIdx !== idx);
+                                  handleUpdateSelectedNode({
+                                    config: { ...config, buttons: filtered }
+                                  });
+                                }}
+                                className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50 transition-colors"
+                                title="Delete button"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Meta 24-Hour Window & Template Fallback */}
+                    <div className="p-2.5 rounded-lg bg-sky-50/70 border border-sky-200/80 space-y-2">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(config.templateName)}
+                          onChange={(e) => {
+                            handleUpdateSelectedNode({
+                              config: {
+                                ...config,
+                                templateName: e.target.checked ? 'candidate_screening_v1_' : '',
+                                templateLanguage: e.target.checked ? 'en' : ''
+                              }
+                            });
+                          }}
+                          className="mt-0.5 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        <div>
+                          <span className="text-xs font-semibold text-slate-800">
+                            Meta Template Fallback (for &gt;24h)
+                          </span>
+                          <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                            Required by Meta if follow-up fires after 24 hours since the candidate's last message.
+                          </p>
+                        </div>
+                      </label>
+
+                      {Boolean(config.templateName) && (
+                        <div className="pt-1.5 space-y-1.5 border-t border-sky-200/60">
+                          <div>
+                            <label className="text-[11px] font-semibold text-sky-900 block">Template Name</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. candidate_screening_v1_"
+                              value={config.templateName || ''}
+                              onChange={(e) => {
+                                handleUpdateSelectedNode({
+                                  config: { ...config, templateName: e.target.value }
+                                });
+                              }}
+                              className="w-full px-2.5 py-1 text-xs bg-white border border-sky-300 rounded font-mono text-sky-900 font-semibold"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-semibold text-sky-900 block">Language Code</label>
+                            <input
+                              type="text"
+                              placeholder="en"
+                              value={config.templateLanguage || 'en'}
+                              onChange={(e) => {
+                                handleUpdateSelectedNode({
+                                  config: { ...config, templateLanguage: e.target.value }
+                                });
+                              }}
+                              className="w-full px-2.5 py-1 text-xs bg-white border border-sky-300 rounded font-mono text-sky-900"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Automation Rules: Cancel on Reply & Wait for Reply */}
+                    <div className="space-y-2 pt-1 border-t border-slate-200">
+                      <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200/80">
+                        <label className="flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={cancelOnReply}
+                            onChange={(e) => {
+                              handleUpdateSelectedNode({
+                                config: { ...config, cancelOnReply: e.target.checked }
+                              });
+                            }}
+                            className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div>
+                            <span className="text-xs font-semibold text-slate-800">
+                              Auto-cancel if candidate replies early
+                            </span>
+                            <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                              If the candidate replies before the timer expires, immediately cancel this nudge and proceed.
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+
+                      {/* Smart Silence Guard (Inactivity Buffer) */}
+                      <div className="p-2.5 rounded-lg bg-indigo-50/70 border border-indigo-200/80 space-y-2">
+                        <label className="flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.enableInactivityGuard === true}
+                            onChange={(e) => {
+                              handleUpdateSelectedNode({
+                                config: {
+                                  ...config,
+                                  enableInactivityGuard: e.target.checked,
+                                  inactivityBufferValue: config.inactivityBufferValue ?? 30,
+                                  inactivityBufferUnit: config.inactivityBufferUnit || 'minutes'
+                                }
+                              });
+                            }}
+                            className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div>
+                            <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                              <span>🛡️ Smart Silence Guard</span>
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-300">
+                                Customizable
+                              </span>
+                            </span>
+                            <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                              Skip follow-up if candidate was active recently, preventing awkward nudges to someone already chatting.
+                            </p>
+                          </div>
+                        </label>
+
+                        {config.enableInactivityGuard === true && (
+                          <div className="pt-2 border-t border-indigo-200/60 space-y-1.5 pl-6">
+                            <label className="text-[11px] font-semibold text-indigo-950 block">
+                              Skip follow-up if candidate messaged within last:
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                max={1440}
+                                value={config.inactivityBufferValue ?? 30}
+                                onChange={(e) => {
+                                  const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                  handleUpdateSelectedNode({
+                                    config: { ...config, inactivityBufferValue: val }
+                                  });
+                                }}
+                                className="w-1/2 px-2.5 py-1 text-xs bg-white border border-indigo-300 rounded font-bold text-slate-900 focus:ring-1 focus:ring-indigo-500"
+                              />
+                              <select
+                                value={config.inactivityBufferUnit || 'minutes'}
+                                onChange={(e) => {
+                                  handleUpdateSelectedNode({
+                                    config: { ...config, inactivityBufferUnit: e.target.value }
+                                  });
+                                }}
+                                className="w-1/2 px-2 py-1 text-xs bg-white border border-indigo-300 rounded text-slate-900 font-medium focus:ring-1 focus:ring-indigo-500"
+                              >
+                                <option value="minutes">Minutes</option>
+                                <option value="hours">Hours</option>
+                              </select>
+                            </div>
+                            <span className="text-[10px] text-indigo-700/80 block italic">
+                              Example: If candidate messaged 5 minutes ago, this follow-up is skipped. If silent for hours, it sends normally.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="p-2.5 rounded-lg bg-amber-50/60 border border-amber-200/80">
+                        <label className="flex items-start gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={waitForReply}
+                            onChange={(e) => {
+                              handleUpdateSelectedNode({
+                                config: { ...config, waitForReply: e.target.checked }
+                              });
+                            }}
+                            className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                          />
+                          <div>
+                            <span className="text-xs font-semibold text-slate-800">
+                              Wait for reply after reminder is sent
+                            </span>
+                            <p className="text-[10px] text-slate-500 leading-tight mt-0.5">
+                              Pauses workflow after sending this reminder until candidate taps a button or replies.
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* 6. Inbound Trigger Node */}
               {selectedNode.type === 'trigger' && (
@@ -1350,6 +2337,12 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
           </div>
         )}
       </div>
+
+      <AIWorkflowGeneratorModal
+        isOpen={isAIGeneratorOpen}
+        onClose={() => setIsAIGeneratorOpen(false)}
+        onWorkflowGenerated={handleApplyAIGeneratedWorkflow}
+      />
     </div>
   );
 };

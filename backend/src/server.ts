@@ -17,6 +17,10 @@ async function bootstrap() {
     // Initialize Socket.IO
     initSocketServer(server);
 
+    // Initialize Workflow Scheduler & Delay Service (BullMQ + Redis + DB Sweeper)
+    const { WorkflowSchedulerService } = await import('./modules/workflows/workflow-scheduler.service.js');
+    await WorkflowSchedulerService.init();
+
     server.listen(env.PORT, () => {
       logger.info(`FlowDesk API server listening on port ${env.PORT}`, {
         env: env.NODE_ENV,

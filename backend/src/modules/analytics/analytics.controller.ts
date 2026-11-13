@@ -52,6 +52,21 @@ export class AnalyticsController {
     }
   }
 
+  public static async getRecipients(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const campaignId = req.query.campaignId as string | undefined;
+
+      const recipients = await AnalyticsService.getCampaignRecipients(campaignId);
+
+      res.status(200).json({
+        success: true,
+        data: recipients
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   public static async recalculate(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const campaignId = req.body?.campaignId as string | undefined;

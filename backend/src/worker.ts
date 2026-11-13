@@ -8,10 +8,14 @@ async function startWorker() {
     logger.info('Initializing FlowDesk Background Worker...', { env: env.NODE_ENV });
     await connectDatabase();
 
+    const { WorkflowSchedulerService } = await import('./modules/workflows/workflow-scheduler.service.js');
+    await WorkflowSchedulerService.init();
+
     logger.info('Background Worker active and listening to BullMQ queues');
 
     const shutdown = async (signal: string) => {
       logger.info(`Worker received ${signal}. Closing queue listeners...`);
+      await WorkflowSchedulerService.close();
       await disconnectDatabase();
       await disconnectRedis();
       logger.info('Worker cleanly shut down');

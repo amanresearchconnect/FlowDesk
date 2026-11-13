@@ -216,9 +216,9 @@ export const Campaigns: React.FC = () => {
   const totalRead = campaigns.reduce((acc, c) => acc + (c.stats?.read || 0), 0);
   const totalReplied = campaigns.reduce((acc, c) => acc + (c.stats?.replied || 0), 0);
 
-  const deliveryRate = totalDispatched > 0 ? Math.round((totalDelivered / totalDispatched) * 100) : 0;
-  const readRate = totalDispatched > 0 ? Math.round((totalRead / totalDispatched) * 100) : 0;
-  const replyRate = totalDispatched > 0 ? Math.round((totalReplied / totalDispatched) * 100) : 0;
+  const deliveryRate = totalDispatched > 0 ? Math.min(100, Math.round((totalDelivered / totalDispatched) * 100)) : 0;
+  const readRate = totalDelivered > 0 ? Math.min(100, Math.round((totalRead / totalDelivered) * 100)) : 0;
+  const replyRate = totalDelivered > 0 ? Math.min(100, Math.round((totalReplied / totalDelivered) * 100)) : 0;
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-slate-50 p-6 space-y-6">
@@ -232,9 +232,13 @@ export const Campaigns: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => navigate('/analytics')}>
-            <BarChart3 className="w-4 h-4 mr-1.5 text-slate-600" />
-            Conversion Funnel
+          <Button
+            variant="outline"
+            className="text-slate-700 hover:text-slate-900 border-slate-300 bg-white shadow-2xs font-medium"
+            onClick={() => navigate('/analytics')}
+          >
+            <BarChart3 className="w-4 h-4 mr-1.5 text-emerald-600" />
+            All Analytics & Funnel
           </Button>
           <Button variant="primary" onClick={() => setIsCreateModalOpen(true)}>
             <Plus className="w-4 h-4 mr-1.5" />
@@ -381,11 +385,11 @@ export const Campaigns: React.FC = () => {
                           size="xs"
                           variant="outline"
                           onClick={() => navigate(`/analytics?campaignId=${camp.id}`)}
-                          title="View Conversion Funnel & Drop-off Diagnostics"
-                          className="text-slate-600 hover:text-slate-900 border-slate-200"
+                          title="View Campaign Analytics, Funnel & Recipient Breakdown"
+                          className="bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400 font-semibold shadow-2xs transition-all gap-1"
                         >
-                          <BarChart3 className="w-3 h-3 mr-1 text-slate-500" />
-                          Funnel
+                          <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
+                          Campaign Analytics
                         </Button>
                         {camp.status === 'draft' && (
                           <Button

@@ -37,7 +37,10 @@ const envSchema = z.object({
   AI_MODEL: z.string().default('gemini-2.0-flash'),
 
   // Microsoft Graph
-  MS_GRAPH_MOCK_MODE: z.coerce.boolean().default(true),
+  MS_GRAPH_MOCK_MODE: z.preprocess((val) => {
+    if (typeof val === 'string') return val.toLowerCase().trim() !== 'false' && val !== '0';
+    return Boolean(val ?? true);
+  }, z.boolean().default(true)),
   MS_GRAPH_TENANT_ID: z.string().optional().default(''),
   MS_GRAPH_CLIENT_ID: z.string().optional().default(''),
   MS_GRAPH_CLIENT_SECRET: z.string().optional().default(''),
@@ -47,7 +50,10 @@ const envSchema = z.object({
 
   // External Verification & Integrations
   VERIFICATION_PROVIDER: z.enum(['mock', 'google_sheets', 'microsoft_graph', 'internal_db']).default('mock'),
-  VERIFICATION_MOCK_MODE: z.coerce.boolean().default(true),
+  VERIFICATION_MOCK_MODE: z.preprocess((val) => {
+    if (typeof val === 'string') return val.toLowerCase().trim() === 'true' || val === '1';
+    return Boolean(val ?? false);
+  }, z.boolean().default(false)),
 
   // Google Sheets
   GOOGLE_SHEETS_SPREADSHEET_ID: z.string().optional().default(''),

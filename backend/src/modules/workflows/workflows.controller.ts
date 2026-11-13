@@ -216,5 +216,36 @@ export class WorkflowsController {
       next(error);
     }
   }
+
+  public static async generateAIWorkflow(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { WorkflowAIGeneratorService } = await import('./workflow-ai-generator.service.js');
+      let text = req.body.documentText || '';
+
+      if (req.file) {
+        text = await WorkflowAIGeneratorService.extractTextFromFile(req.file);
+      }
+
+      const instructions = req.body.instructions || '';
+      const workflowName = req.body.workflowName || '';
+
+      const result = await WorkflowAIGeneratorService.generateWorkflowFromText({
+        documentText: text,
+        instructions,
+        workflowName
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

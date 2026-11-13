@@ -51,7 +51,6 @@ export const AppLayout: React.FC = () => {
   const navItems: NavItem[] = [
     { name: 'Team Inbox', to: '/inbox', icon: Inbox },
     { name: 'Campaigns', to: '/campaigns', icon: Send },
-    { name: 'Analytics & Funnel', to: '/analytics', icon: BarChart3 },
     { name: 'Contacts & Ingest', to: '/contacts', icon: Users },
     { name: 'Workflows', to: '/workflows', icon: GitBranch },
     { name: 'Knowledge Base', to: '/knowledge-base', icon: BookOpen },

@@ -131,6 +131,16 @@ export const Inbox: React.FC = () => {
   const [selectedStartStepId, setSelectedStartStepId] = useState<string>('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
+  const prevConvIdRef = useRef<string | null>(null);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const threshold = 120;
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    isNearBottomRef.current = distanceFromBottom <= threshold;
+  };
 
   // 1. Fetch conversations
   const fetchConversations = async () => {
@@ -218,7 +228,16 @@ export const Inbox: React.FC = () => {
     try {
       const res = await api.get(`/conversations/${convId}/messages?limit=100`);
       const fetchedList = Array.isArray(res.data) ? res.data : [];
-      setMessages(fetchedList);
+      setMessages((prev) => {
+        // Only update state if message count, IDs, or delivery status actually changed to avoid triggering unnecessary re-renders & auto-scroll
+        if (
+          prev.length === fetchedList.length &&
+          prev.every((m, idx) => m.id === fetchedList[idx]?.id && m.status === fetchedList[idx]?.status)
+        ) {
+          return prev;
+        }
+        return fetchedList;
+      });
       // Mark read locally
       setConversations((prev) =>
         prev.map((c) => ((c.id || (c as any)._id) === convId ? { ...c, unreadCount: 0 } : c))
@@ -252,10 +271,16 @@ export const Inbox: React.FC = () => {
     }
   }, [selectedConversation?.id, (selectedConversation as any)?._id]);
 
-  // Auto-scroll messages to bottom
+  // Auto-scroll messages to bottom only when switching conversations or if user is already near bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const activeConvId = selectedConversation?.id || (selectedConversation as any)?._id || null;
+    const isNewConversation = prevConvIdRef.current !== activeConvId;
+    prevConvIdRef.current = activeConvId;
+
+    if (isNewConversation || isNearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: isNewConversation ? 'auto' : 'smooth' });
+    }
+  }, [messages, selectedConversation?.id]);
 
   // 3. Socket.IO Real-Time Listeners & Room Management
   useEffect(() => {
@@ -710,7 +735,11 @@ export const Inbox: React.FC = () => {
           </div>
 
           {/* Messages Scrollable Canvas */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-100/60">
+          <div
+            ref={messagesContainerRef}
+            onScroll={handleScroll}
+            className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-100/60"
+          >
             {/* Thread Start Date Marker */}
             <div className="flex justify-center my-1">
               <span className="px-3 py-0.5 rounded-full bg-white/90 border border-slate-200 text-[10px] font-semibold text-slate-500 shadow-2xs uppercase tracking-wider">

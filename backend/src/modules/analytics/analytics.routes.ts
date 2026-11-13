@@ -9,5 +9,6 @@ analyticsRouter.use(requireAuth);
 analyticsRouter.get('/overview', AnalyticsController.getOverview);
 analyticsRouter.get('/funnel', AnalyticsController.getFunnel);
 analyticsRouter.get('/step-dropoff', AnalyticsController.getStepDropOff);
+analyticsRouter.get('/recipients', AnalyticsController.getRecipients);
 analyticsRouter.post('/recalculate', AnalyticsController.recalculate);
 

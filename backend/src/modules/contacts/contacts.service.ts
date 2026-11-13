@@ -111,6 +111,23 @@ export class ContactsService {
         }
       }
 
+      // Auto-capture all remaining columns from the spreadsheet into customFields so no data is lost!
+      for (const [colName, colVal] of Object.entries(row)) {
+        if (
+          colName !== phoneCol &&
+          colName !== firstCol &&
+          colName !== lastCol &&
+          colName !== emailCol &&
+          colVal !== undefined &&
+          colVal !== null &&
+          String(colVal).trim() !== ''
+        ) {
+          if (!customFields[colName]) {
+            customFields[colName] = typeof colVal === 'string' ? colVal.trim() : colVal;
+          }
+        }
+      }
+
       validRecords.push({
         phone: e164,
         firstName: firstCol && row[firstCol] ? String(row[firstCol]).trim() : '',

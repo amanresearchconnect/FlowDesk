@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { WorkflowsController } from './workflows.controller.js';
 import { requireAuth } from '../../middlewares/auth.middleware.js';
 import { requireRole } from '../../middlewares/rbac.middleware.js';
@@ -9,7 +10,20 @@ import {
   triggerWorkflowTestSchema
 } from './workflows.validator.js';
 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB
+});
+
 const router = Router();
+
+router.post(
+  '/generate-ai',
+  requireAuth,
+  requireRole(['admin', 'manager', 'agent']),
+  upload.single('file'),
+  WorkflowsController.generateAIWorkflow
+);
 
 router.post(
   '/',

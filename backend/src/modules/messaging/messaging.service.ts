@@ -217,7 +217,7 @@ export class MessagingService {
     // Trigger workflow engine ONLY if conversation is bot-managed
     let workflowHandled = false;
     if (freshConv && freshConv.status === 'bot') {
-      const workflowResult = await WorkflowEngine.handleContactReply(contact._id, text.trim());
+      const workflowResult = await WorkflowEngine.handleContactReply(contact._id, text.trim(), campaignId?.toString());
       workflowHandled = workflowResult.handled;
     }
 

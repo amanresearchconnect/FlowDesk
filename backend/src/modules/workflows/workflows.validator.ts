@@ -19,6 +19,7 @@ const workflowNodeSchema = z.object({
     'append_to_sheet',
     'update_record',
     'ai_conversation',
+    'ai_parse',
     'human_handoff',
     'terminate'
   ]),

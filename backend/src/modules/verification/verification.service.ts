@@ -130,5 +130,40 @@ export class VerificationService {
     }
     return { success: true };
   }
+
+  public static async upsertRowToSheet(options: {
+    sheetName?: string;
+    mode?: 'append' | 'update' | 'upsert';
+    lookupKey?: 'phone' | 'email' | 'surveyId';
+    lookupValue?: string;
+    columnUpdates: Array<{ sheetColumn: string; value: any }>;
+    spreadsheetId?: string;
+    spreadsheetUrl?: string;
+    providerName?: string;
+  }): Promise<{ success: boolean; mode: 'appended' | 'updated' | 'not_found'; rowNumber?: number }> {
+    const provider = getVerificationProvider(options.providerName) as any;
+    const targetSpreadsheetId = extractSpreadsheetId(options.spreadsheetUrl || options.spreadsheetId);
+    if (typeof provider.upsertRow === 'function') {
+      return provider.upsertRow({
+        sheetName: options.sheetName || 'Responses',
+        mode: options.mode || 'upsert',
+        lookupKey: options.lookupKey || 'phone',
+        lookupValue: options.lookupValue,
+        columnUpdates: options.columnUpdates,
+        customSpreadsheetId: targetSpreadsheetId,
+        rawUrl: options.spreadsheetUrl || options.spreadsheetId
+      });
+    }
+
+    const rowValues = options.columnUpdates.map((c) => c.value);
+    const appendRes = await this.appendRowToSheet({
+      sheetName: options.sheetName,
+      rowValues,
+      spreadsheetId: targetSpreadsheetId,
+      spreadsheetUrl: options.spreadsheetUrl,
+      providerName: options.providerName
+    });
+    return { success: appendRes.success, mode: 'appended', rowNumber: appendRes.rowNumber };
+  }
 }
 

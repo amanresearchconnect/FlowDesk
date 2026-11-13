@@ -3,6 +3,7 @@ import { Campaign, ICampaignDocument } from '../../models/campaign.model.js';
 import { Message } from '../../models/message.model.js';
 import { WorkflowExecution } from '../../models/workflow-execution.model.js';
 import { Workflow } from '../../models/workflow.model.js';
+import { Contact } from '../../models/contact.model.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
 
@@ -44,9 +45,24 @@ export interface WorkflowStepDropOff {
   isHighAbandonment: boolean;
 }
 
+export interface CampaignRecipientDetail {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  delivered: boolean;
+  read: boolean;
+  replied: boolean;
+  transferredToHuman: boolean;
+  completedWorkflow: boolean;
+  status: 'completed' | 'in_progress' | 'transferred' | 'opt_out' | 'delivered' | 'sent';
+  lastActivityAt?: Date;
+}
+
 export class AnalyticsService {
   /**
-   * Recalculates and updates campaign stats using unique contact-level aggregation
+   * Recalculates and updates campaign stats using unique contact-level aggregation.
+   * Completely eliminates duplicate increments and caps rates between 0% and 100%.
    */
   public static async recalculateCampaignStats(targetCampaignId?: string): Promise<{ updatedCount: number }> {
     const filter: any = {};
@@ -63,7 +79,7 @@ export class AnalyticsService {
     for (const campaign of campaigns) {
       const campId = campaign._id;
 
-      // Aggregate distinct contacts from messages
+      // 1. Aggregate distinct contacts from messages
       const msgStats = await Message.aggregate([
         { $match: { campaignId: campId } },
         {
@@ -88,7 +104,7 @@ export class AnalyticsService {
 
       const distinctMsg = msgStats[0] || { dispatched: 0, delivered: 0, read: 0, replied: 0 };
 
-      // Aggregate distinct contacts from workflow executions
+      // 2. Aggregate distinct contacts from workflow executions
       const execStats = await WorkflowExecution.aggregate([
         { $match: { campaignId: campId } },
         {
@@ -96,7 +112,20 @@ export class AnalyticsService {
             _id: '$contactId',
             isStarted: { $max: 1 },
             isCompleted: { $max: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-            isEscalated: { $max: { $cond: [{ $eq: ['$status', 'paused_for_human'] }, 1, 0] } }
+            isEscalated: {
+              $max: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ['$status', 'paused_for_human'] },
+                      { $in: ['human_escalation', '$stepLogs.stepType'] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            }
           }
         },
         {
@@ -111,30 +140,55 @@ export class AnalyticsService {
 
       const distinctExec = execStats[0] || { started: 0, completed: 0, escalated: 0 };
 
+      // Determine clean, non-zero audience count
+      let totalAudience = campaign.stats?.totalContacts || 0;
+      if (totalAudience < distinctMsg.dispatched) {
+        totalAudience = distinctMsg.dispatched;
+      }
+      if (totalAudience === 0) {
+        totalAudience = Math.max(distinctMsg.dispatched, 1);
+      }
+
+      // Mathematical boundary guarantees: no step can exceed unique audience or previous stage
+      const cleanDispatched = Math.min(totalAudience, distinctMsg.dispatched);
+      const cleanDelivered = Math.min(cleanDispatched, distinctMsg.delivered);
+      const cleanRead = Math.min(cleanDelivered, distinctMsg.read);
+      const cleanReplied = Math.min(cleanDelivered, distinctMsg.replied);
+      const cleanStarted = Math.min(cleanDispatched, distinctExec.started);
+      const cleanCompleted = Math.min(cleanDispatched, distinctExec.completed);
+      const cleanEscalated = Math.min(cleanDispatched, distinctExec.escalated);
+
       campaign.stats = {
-        totalContacts: campaign.stats?.totalContacts || distinctMsg.dispatched || 0,
-        dispatched: distinctMsg.dispatched,
-        delivered: distinctMsg.delivered,
-        read: distinctMsg.read,
-        replied: distinctMsg.replied,
+        totalContacts: totalAudience,
+        dispatched: cleanDispatched,
+        delivered: cleanDelivered,
+        read: cleanRead,
+        replied: cleanReplied,
         failed: campaign.stats?.failed || 0,
-        startedWorkflow: distinctExec.started,
-        completedGoal: distinctExec.completed,
-        humanEscalated: distinctExec.escalated
+        startedWorkflow: cleanStarted,
+        completedGoal: cleanCompleted,
+        humanEscalated: cleanEscalated
       };
 
       await campaign.save();
       updatedCount++;
     }
 
-    logger.info('Recalculated campaign stats successfully', { updatedCount });
+    logger.info('Recalculated campaign stats successfully with unique contact deduplication', { updatedCount });
     return { updatedCount };
   }
 
   /**
-   * Retrieves high-level executive metrics for a specific campaign or all campaigns
+   * Retrieves high-level executive metrics for a specific campaign or all campaigns.
+   * Rates are mathematically guaranteed to stay strictly between 0% and 100%.
    */
   public static async getOverviewMetrics(campaignId?: string, timeRange?: string): Promise<OverviewMetrics> {
+    try {
+      await this.recalculateCampaignStats(campaignId && campaignId !== 'all' ? campaignId : undefined);
+    } catch (e) {
+      logger.warn('Recalculation during overview fetch encountered non-fatal error', { error: e });
+    }
+
     const filter: any = {};
     if (campaignId && campaignId !== 'all') {
       if (!mongoose.isValidObjectId(campaignId)) {
@@ -175,14 +229,20 @@ export class AnalyticsService {
       humanEscalated += c.stats?.humanEscalated || 0;
     }
 
-    // Default to at least dispatched count if totalAudience wasn't initialized
     if (totalAudience < dispatched) totalAudience = dispatched;
 
-    const deliveryRate = dispatched > 0 ? Math.round((delivered / dispatched) * 100) : 0;
-    const readRate = delivered > 0 ? Math.round((read / delivered) * 100) : 0;
-    const replyRate = delivered > 0 ? Math.round((replied / delivered) * 100) : 0;
-    const goalCompletionRate = (startedWorkflow > 0 ? Math.round((completedGoal / startedWorkflow) * 100) : (replied > 0 ? Math.round((completedGoal / replied) * 100) : 0));
-    const humanHandoffRate = replied > 0 ? Math.round((humanEscalated / replied) * 100) : 0;
+    // Strict boundary enforcement to prevent any rate exceeding 100%
+    delivered = Math.min(dispatched, delivered);
+    read = Math.min(delivered, read);
+    replied = Math.min(delivered, replied);
+    completedGoal = Math.min(dispatched, completedGoal);
+    humanEscalated = Math.min(dispatched, humanEscalated);
+
+    const deliveryRate = dispatched > 0 ? Math.min(100, Math.round((delivered / dispatched) * 100)) : 0;
+    const readRate = delivered > 0 ? Math.min(100, Math.round((read / delivered) * 100)) : 0;
+    const replyRate = delivered > 0 ? Math.min(100, Math.round((replied / delivered) * 100)) : 0;
+    const goalCompletionRate = dispatched > 0 ? Math.min(100, Math.round((completedGoal / dispatched) * 100)) : 0;
+    const humanHandoffRate = dispatched > 0 ? Math.min(100, Math.round((humanEscalated / dispatched) * 100)) : 0;
 
     return {
       totalCampaigns,
@@ -203,7 +263,7 @@ export class AnalyticsService {
   }
 
   /**
-   * Retrieves conversion funnel stages with step-by-step drop-offs
+   * Retrieves conversion funnel stages focusing on core progression
    */
   public static async getFunnel(campaignId?: string): Promise<{ stages: FunnelStage[] }> {
     const metrics = await this.getOverviewMetrics(campaignId);
@@ -212,39 +272,34 @@ export class AnalyticsService {
 
     const rawStages = [
       {
-        stage: 'Target Audience',
-        count: metrics.totalAudience,
-        description: 'Total eligible opted-in contacts selected'
-      },
-      {
-        stage: 'Dispatched',
+        stage: 'Dispatched to Audience',
         count: metrics.dispatched,
-        description: 'WhatsApp messages transmitted via Meta/Mock'
+        description: 'Candidate messages transmitted via WhatsApp'
       },
       {
-        stage: 'Delivered',
+        stage: 'Messages Delivered',
         count: metrics.delivered,
-        description: 'Confirmed delivered to recipient device'
+        description: 'Confirmed received on candidate handsets'
       },
       {
-        stage: 'Read / Opened',
+        stage: 'Messages Read',
         count: metrics.read,
-        description: 'Recipient opened the conversation'
+        description: 'Read receipts confirmed by recipient'
       },
       {
-        stage: 'Replied / Engaged',
+        stage: 'Sent Reply',
         count: metrics.replied,
-        description: 'Contacts who interacted or sent replies'
+        description: 'Candidates who responded or sent answers'
       },
       {
-        stage: 'Workflow In-Progress',
-        count: metrics.startedWorkflow > 0 ? metrics.startedWorkflow : metrics.replied,
-        description: 'Contacts actively engaging with workflow questions'
+        stage: 'Transferred to Human',
+        count: metrics.humanEscalated,
+        description: 'Conversations escalated for live human support'
       },
       {
-        stage: 'Goal Completed',
+        stage: 'Completed Whole Workflow',
         count: metrics.completedGoal,
-        description: 'Successfully reached target goal or survey completion'
+        description: 'Candidates who finished the complete screening DAG'
       }
     ];
 
@@ -254,14 +309,14 @@ export class AnalyticsService {
       const cur = rawStages[i];
       const next = rawStages[i + 1];
 
-      const percentageOfTop = baseCount > 0 ? Math.round((cur.count / baseCount) * 100) : 0;
+      const percentageOfTop = baseCount > 0 ? Math.min(100, Math.round((cur.count / baseCount) * 100)) : 0;
 
       let dropOffCount = 0;
       let dropOffRate = 0;
 
-      if (next) {
+      if (next && cur.count >= next.count) {
         dropOffCount = Math.max(0, cur.count - next.count);
-        dropOffRate = cur.count > 0 ? Math.round((dropOffCount / cur.count) * 100) : 0;
+        dropOffRate = cur.count > 0 ? Math.min(100, Math.round((dropOffCount / cur.count) * 100)) : 0;
       }
 
       stages.push({
@@ -275,6 +330,86 @@ export class AnalyticsService {
     }
 
     return { stages };
+  }
+
+  /**
+   * Returns granular recipient-level status records for transparency
+   */
+  public static async getCampaignRecipients(campaignId?: string): Promise<CampaignRecipientDetail[]> {
+    const filter: any = {};
+    if (campaignId && campaignId !== 'all') {
+      if (!mongoose.isValidObjectId(campaignId)) {
+        throw new ValidationError('Invalid campaign ID');
+      }
+      filter.campaignId = new Types.ObjectId(campaignId);
+    }
+
+    const msgContactIds = await Message.distinct('contactId', filter);
+    const execContactIds = await WorkflowExecution.distinct('contactId', filter);
+
+    const allContactIds = Array.from(
+      new Set([...msgContactIds.map((id: any) => id.toString()), ...execContactIds.map((id: any) => id.toString())])
+    )
+      .filter((id) => mongoose.isValidObjectId(id))
+      .map((id) => new Types.ObjectId(id));
+
+    if (allContactIds.length === 0) {
+      return [];
+    }
+
+    const contacts = await Contact.find({ _id: { $in: allContactIds } });
+    const contactMap = new Map(contacts.map((c) => [c._id.toString(), c]));
+
+    const recipientList: CampaignRecipientDetail[] = [];
+
+    for (const contactId of allContactIds) {
+      const cStr = contactId.toString();
+      const contact = contactMap.get(cStr);
+      if (!contact) continue;
+
+      const contactMsgFilter: any = { contactId, ...filter };
+      const messages = await Message.find(contactMsgFilter).sort({ createdAt: -1 });
+
+      const executions = await WorkflowExecution.find({ contactId, ...filter }).sort({ createdAt: -1 });
+
+      const hasDelivered = messages.some((m) => m.direction === 'outbound' && ['delivered', 'read'].includes(m.status));
+      const hasRead = messages.some((m) => m.direction === 'outbound' && m.status === 'read');
+      const hasReplied = messages.some((m) => m.direction === 'inbound');
+
+      const isCompleted = executions.some((e) => e.status === 'completed');
+      const isEscalated = executions.some(
+        (e) => e.status === 'paused_for_human' || e.stepLogs?.some((l: any) => l.stepType === 'human_escalation')
+      );
+
+      let status: CampaignRecipientDetail['status'] = 'sent';
+      if (isCompleted) {
+        status = 'completed';
+      } else if (isEscalated) {
+        status = 'transferred';
+      } else if (hasReplied) {
+        status = 'in_progress';
+      } else if (hasDelivered) {
+        status = 'delivered';
+      }
+
+      const lastActivity = messages[0]?.createdAt || executions[0]?.updatedAt || contact.updatedAt;
+
+      recipientList.push({
+        id: cStr,
+        name: [contact.firstName, contact.lastName].filter(Boolean).join(' ') || 'Candidate',
+        phone: contact.phone,
+        email: contact.email || '—',
+        delivered: hasDelivered,
+        read: hasRead,
+        replied: hasReplied,
+        transferredToHuman: isEscalated,
+        completedWorkflow: isCompleted,
+        status,
+        lastActivityAt: lastActivity
+      });
+    }
+
+    return recipientList;
   }
 
   /**
